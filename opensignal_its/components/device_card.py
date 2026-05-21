@@ -31,6 +31,9 @@ def device_card(status: DeviceStatus):
     
 def timing_panel(
     current_pattern: str,
+    unit_status: str,
+    phase_summary: str,
+    detector_summary: str,
     mode_text: str,
     on_select_pattern_1,
     on_select_pattern_2,
@@ -46,9 +49,12 @@ def timing_panel(
             rx.hstack(
                 rx.text("Current Pattern:"),
                 rx.badge(current_pattern, color_scheme="blue"),
-                rx.text("Mode:"),
-                rx.badge(mode_text),
+                rx.text("Unit Status:"),
+                rx.badge(unit_status, color_scheme="green"),
             ),
+            rx.text(f"Active Phases: {phase_summary}"),
+            rx.text(f"Active Detectors: {detector_summary}"),
+            rx.text(f"Controller: {mode_text}", size="2", color="gray"),
             rx.divider(),
             
             # Command Buttons

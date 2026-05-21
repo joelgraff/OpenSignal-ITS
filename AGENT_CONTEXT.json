@@ -1,8 +1,8 @@
 {
   "project": "OpenSignal ITS",
-  "last_updated": "2026-05-21T17:35:00Z",
-  "version": "0.2.2-dev",
-  "status": "MVP core functional: M60 SNMP connect/poll + timing commands with documented core OID set",
+  "last_updated": "2026-05-21T19:41:00Z",
+  "version": "0.2.3-dev",
+  "status": "MVP core functional: M60 SNMPv1 connect/poll verified with known-good live OIDs and structured dashboard telemetry",
 
   "architecture": {
     "core_pattern": "Abstract Device base class with registry + factory",
@@ -18,11 +18,15 @@
       "features": [
         "SNMPv1 successful connection",
         "Async connect/poll with background task",
+        "Known-good OID polling for sysDescr, current pattern, unit status, phase status, and detector status",
+        "Structured status fields rendered in timing panel (pattern/unit/phase/detector summaries)",
+        "Safe command probe mode (GET-only) to validate command OID targets without SNMP SET writes",
         "Configurable IP/port/community",
         "Timing command buttons wired to command() method"
       ],
       "limitations": [
         "SNMPv2c times out (v1 working)",
+        "Pattern control command OID 1.3.6.1.4.1.1206.4.2.1.8.0 probes as noSuchName on target controller",
         "Command OIDs still require final Siemens field validation before production use",
         "No persistent command audit logging yet"
       ]
@@ -31,11 +35,11 @@
 
   "ui_status": {
     "dashboard": "Good",
-    "features": ["Status cards", "Timing panel with buttons", "Connect/Refresh"]
+    "features": ["Status cards", "Timing panel with pattern/unit/phase/detector summaries", "Connect/Refresh"]
   },
 
   "next_priorities": [
-    "Real NTCIP 1202 OIDs for timing + status",
+    "Validate Siemens command SET OIDs/values from field docs or controlled probe",
     "Folium map",
     "Video streaming grid",
     "Basic event logging"
@@ -56,6 +60,7 @@
 
   "notes_for_grok": [
     "SNMPv1 works, v2c times out on target M60",
+    "Working poll OIDs now integrated from live walk; focus next on safe command OID validation",
     "Focus on safe, bounded tickets"
   ]
 }

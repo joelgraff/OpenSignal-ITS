@@ -19,15 +19,12 @@ from ..models.device import DeviceStatus, DeviceConfig
 
 logger = logging.getLogger(__name__)
 
-# NTCIP 1202 core status objects (phase status group, scalar objects).
-# Source: NTCIP 1202 object names used broadly across compliant controllers.
+# Confirmed working objects from SEPAC 5.2.0 walk and SNMPv1 probe.
 OID_SYS_DESCR = "1.3.6.1.2.1.1.1.0"  # SNMPv2-MIB::sysDescr.0
-OID_SYS_UPTIME = "1.3.6.1.2.1.1.3.0"  # SNMPv2-MIB::sysUpTime.0
-OID_PHASE_STATUS_GROUP_REDS = "1.3.6.1.4.1.1206.4.2.1.1.0"
-OID_PHASE_STATUS_GROUP_YELLOWS = "1.3.6.1.4.1.1206.4.2.1.2.0"
-OID_PHASE_STATUS_GROUP_GREENS = "1.3.6.1.4.1.1206.4.2.1.3.0"
-OID_PHASE_STATUS_GROUP_VEH_CALLS = "1.3.6.1.4.1.1206.4.2.1.6.0"
-OID_PHASE_STATUS_GROUP_PED_CALLS = "1.3.6.1.4.1.1206.4.2.1.7.0"
+OID_CURRENT_PATTERN = "1.3.6.1.4.1.1206.2.2.1.1.9.0"
+OID_UNIT_STATUS = "1.3.6.1.4.1.1206.2.2.1.1.7.0"
+OID_PHASE_STATUS_BASE = "1.3.6.1.4.1.1206.3.3.1.1.1.1.8"
+OID_DETECTOR_STATUS_BASE = "1.3.6.1.4.1.1206.3.3.1.2.1.1.1"
 
 # NTCIP 1202 timing/control objects (common scalar controls).
 # NOTE: Vendor implementations can vary. Validate on target Siemens M60 docs before production rollout.
@@ -38,20 +35,61 @@ OID_PHASE_CONTROL_OMIT = "1.3.6.1.4.1.1206.4.2.1.11.0"
 
 
 class SiemensM60(Device):
-    """Siemens M60 ATC with NTCIP 1202 support + Telnet fallback."""
+    """Siemens M60 / SEPAC 5.2.0 SNMPv1 polling + legacy command path."""
 
     def __init__(self, config: DeviceConfig):
         super().__init__(config)
         self._snmp_engine = SnmpEngine()
-        self._mp_model = 1  # Prefer SNMPv2c, fallback to SNMPv1 in connect().
+        self._mp_model = 0  # SNMPv1 is known-good for this controller.
 
-    def _version_candidates(self) -> list[int]:
-        version = self.config.snmp_version.strip().lower()
-        if version in ("v2c", "2c", "2"):
-            return [1]
-        if version in ("v1", "1"):
-            return [0]
-        return [1, 0]
+    async def _safe_get_oid(self, target: UdpTransportTarget, oid: str) -> str | None:
+        """Read one OID and return value as string or None on timeout/noSuchName."""
+        try:
+            iterator = get_cmd(
+                self._snmp_engine,
+                CommunityData(self.config.community, mpModel=self._mp_model),
+                target,
+                ContextData(),
+                ObjectType(ObjectIdentity(oid)),
+            )
+            error_indication, error_status, _, var_binds = await iterator
+            if error_indication or error_status:
+                logger.warning(
+                    "SiemensM60 GET failed ip=%s oid=%s error=%s",
+                    self.config.ip_address,
+                    oid,
+                    str(error_indication or error_status),
+                )
+                return None
+            return str(var_binds[0][1])
+        except Exception:
+            logger.exception(
+                "SiemensM60 GET exception ip=%s oid=%s",
+                self.config.ip_address,
+                oid,
+            )
+            return None
+
+    @staticmethod
+    def _to_int(value: str | None) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _unit_status_text(code: int | None) -> str:
+        mapping = {
+            1: "normal",
+            2: "flash",
+            3: "preempt",
+            4: "stop time",
+        }
+        if code is None:
+            return "unknown"
+        return mapping.get(code, f"code {code}")
 
     async def connect(self) -> bool:
         """Test connectivity via SNMP."""
@@ -62,43 +100,23 @@ class SiemensM60(Device):
                 timeout=self.config.timeout_seconds,
                 retries=self.config.retries,
             )
+            sys_descr = await self._safe_get_oid(target, OID_SYS_DESCR)
+            current_pattern = await self._safe_get_oid(target, OID_CURRENT_PATTERN)
 
-            # Simple sysDescr test with configured SNMP version policy.
-            for mp_model in self._version_candidates():
-                iterator = get_cmd(
-                    self._snmp_engine,
-                    CommunityData(self.config.community, mpModel=mp_model),
-                    target,
-                    ContextData(),
-                    ObjectType(ObjectIdentity(OID_SYS_DESCR)),
-                )
-                errorIndication, errorStatus, _, _ = await iterator
-                if not errorIndication and not errorStatus:
-                    self._mp_model = mp_model
-                    self.status.is_online = True
-                    version = "v2c" if mp_model == 1 else "v1"
-                    self.status.status_text = f"Connected via SNMP {version}"
-                    logger.info(
-                        "SiemensM60 connect success ip=%s port=%s version=%s",
-                        self.config.ip_address,
-                        self.config.port,
-                        version,
-                    )
-                    return True
-                attempted = "v2c" if mp_model == 1 else "v1"
-                logger.warning(
-                    "SiemensM60 connect attempt failed ip=%s version=%s error=%s",
-                    self.config.ip_address,
-                    attempted,
-                    str(errorIndication or errorStatus),
-                )
-                self.status.errors.append(
-                    f"SNMP {attempted}: {str(errorIndication or errorStatus)}"
-                )
+            if sys_descr is None and current_pattern is None:
+                self.status.is_online = False
+                self.status.status_text = "SNMPv1 connection failed"
+                self.status.errors.append("No response from sysDescr/currentPattern")
+                return False
 
-            self.status.is_online = False
-            self.status.status_text = "SNMP connection failed"
-            return False
+            self.status.is_online = True
+            self.status.status_text = "Connected via SNMP v1"
+            logger.info(
+                "SiemensM60 connect success ip=%s port=%s version=v1",
+                self.config.ip_address,
+                self.config.port,
+            )
+            return True
         except Exception as e:
             self.status.is_online = False
             self.status.status_text = "SNMP connect exception"
@@ -106,55 +124,60 @@ class SiemensM60(Device):
             return False
 
     async def poll(self) -> DeviceStatus:
-        """Poll key NTCIP 1202 objects for phases, calls, and unit status."""
+        """Poll known-good OIDs and return structured status for UI."""
         try:
+            self.status.errors = []
             target = await UdpTransportTarget.create(
                 (self.config.ip_address, self.config.port),
                 timeout=self.config.timeout_seconds,
                 retries=self.config.retries,
             )
-            # Core status set for dashboard telemetry.
-            oids = [
-                ObjectType(ObjectIdentity(OID_SYS_UPTIME)),
-                ObjectType(ObjectIdentity(OID_PHASE_STATUS_GROUP_REDS)),
-                ObjectType(ObjectIdentity(OID_PHASE_STATUS_GROUP_YELLOWS)),
-                ObjectType(ObjectIdentity(OID_PHASE_STATUS_GROUP_GREENS)),
-                ObjectType(ObjectIdentity(OID_PHASE_STATUS_GROUP_VEH_CALLS)),
-                ObjectType(ObjectIdentity(OID_PHASE_STATUS_GROUP_PED_CALLS)),
-                ObjectType(ObjectIdentity(OID_SYSTEM_PATTERN_CONTROL)),
-            ]
 
-            iterator = get_cmd(
-                self._snmp_engine,
-                CommunityData(self.config.community, mpModel=self._mp_model),
-                target,
-                ContextData(),
-                *oids
-            )
+            sys_descr = await self._safe_get_oid(target, OID_SYS_DESCR)
+            current_pattern_raw = await self._safe_get_oid(target, OID_CURRENT_PATTERN)
+            unit_status_raw = await self._safe_get_oid(target, OID_UNIT_STATUS)
 
-            errorIndication, errorStatus, errorIndex, varBinds = await iterator
+            phase_status: dict[str, int] = {}
+            for phase in range(1, 9):
+                oid = f"{OID_PHASE_STATUS_BASE}.{phase}"
+                phase_status[str(phase)] = self._to_int(await self._safe_get_oid(target, oid)) or 0
 
-            if errorIndication or errorStatus:
-                self.status.is_online = False
-                self.status.errors.append(str(errorIndication or errorStatus))
-                return self.status
+            detectors: dict[str, int] = {}
+            for detector in range(1, 9):
+                oid = f"{OID_DETECTOR_STATUS_BASE}.{detector}"
+                detectors[str(detector)] = self._to_int(await self._safe_get_oid(target, oid)) or 0
+
+            current_pattern = self._to_int(current_pattern_raw)
+            unit_status_code = self._to_int(unit_status_raw)
+            active_phases = [phase for phase, state in phase_status.items() if state > 0]
+            active_detectors = [det for det, state in detectors.items() if state > 0]
 
             self.status.raw_data = {
-                "sys_uptime": str(varBinds[0][1]),
-                "phase_reds": str(varBinds[1][1]),
-                "phase_yellows": str(varBinds[2][1]),
-                "phase_greens": str(varBinds[3][1]),
-                "vehicle_calls": str(varBinds[4][1]),
-                "ped_calls": str(varBinds[5][1]),
-                "current_pattern": str(varBinds[6][1]),
+                "sys_descr": sys_descr or "unavailable",
+                "current_pattern": str(current_pattern) if current_pattern is not None else "Unknown",
+                "unit_status_code": unit_status_code,
+                "unit_status": self._unit_status_text(unit_status_code),
+                "phase_status": phase_status,
+                "phase_summary": ", ".join(active_phases) if active_phases else "none active",
+                "detectors": detectors,
+                "detector_summary": ", ".join(active_detectors) if active_detectors else "none active",
             }
+
+            if current_pattern is None and unit_status_code is None and sys_descr is None:
+                self.status.is_online = False
+                self.status.status_text = "SNMPv1 poll failed"
+                self.status.errors.append("No values returned from known-good OIDs")
+                return self.status
+
             self.status.is_online = True
-            self.status.status_text = "Online - phase and timing telemetry updated"
+            pattern_text = self.status.raw_data.get("current_pattern", "Unknown")
+            unit_text = self.status.raw_data.get("unit_status", "unknown")
+            self.status.status_text = f"Online - Pattern {pattern_text}, Unit {unit_text}"
             logger.info(
-                "SiemensM60 poll success ip=%s pattern=%s greens=%s",
+                "SiemensM60 poll success ip=%s pattern=%s unit_status=%s",
                 self.config.ip_address,
-                self.status.raw_data.get("current_pattern", "unknown"),
-                self.status.raw_data.get("phase_greens", "unknown"),
+                pattern_text,
+                unit_text,
             )
             return self.status
 
@@ -166,9 +189,16 @@ class SiemensM60(Device):
     async def command(self, command: str, params: Dict[str, Any]) -> bool:
         """Execute timing and control commands."""
         try:
+            probe_only = bool(params.get("probe_only", False))
+
             if command == "select_pattern":
                 pattern = int(params.get("pattern", 1))
                 # NTCIP 1202: systemPatternControl
+                if probe_only:
+                    return await self._probe_command_target(
+                        OID_SYSTEM_PATTERN_CONTROL,
+                        f"Probe pattern command value={pattern}",
+                    )
                 success = await self._set_snmp(OID_SYSTEM_PATTERN_CONTROL, pattern)
                 if success:
                     self.status.status_text = f"Pattern {pattern} selected"
@@ -178,6 +208,11 @@ class SiemensM60(Device):
                 mode = str(params.get("mode", "")).lower()
                 # Common pattern control mapping: 1=free, 2=coordinated.
                 mode_value = 2 if mode == "coordinated" else 1
+                if probe_only:
+                    return await self._probe_command_target(
+                        OID_SYSTEM_PATTERN_CONTROL,
+                        f"Probe mode command mode={mode or 'unknown'} value={mode_value}",
+                    )
                 success = await self._set_snmp(OID_SYSTEM_PATTERN_CONTROL, mode_value)
                 if success:
                     self.status.status_text = f"Mode set to {mode or 'unknown'}"
@@ -186,6 +221,11 @@ class SiemensM60(Device):
             if command == "manual_hold":
                 hold = bool(params.get("hold", True))
                 # NTCIP 1202: phaseControlHold bitmask control.
+                if probe_only:
+                    return await self._probe_command_target(
+                        OID_PHASE_CONTROL_HOLD,
+                        f"Probe manual_hold command hold={hold}",
+                    )
                 success = await self._set_snmp(OID_PHASE_CONTROL_HOLD, 255 if hold else 0)
                 if success:
                     self.status.status_text = "Manual hold command sent"
@@ -193,6 +233,11 @@ class SiemensM60(Device):
 
             if command == "advance_phase":
                 # NTCIP 1202: phaseControlForceOff bitmask control.
+                if probe_only:
+                    return await self._probe_command_target(
+                        OID_PHASE_CONTROL_FORCEOFF,
+                        "Probe advance_phase command",
+                    )
                 success = await self._set_snmp(OID_PHASE_CONTROL_FORCEOFF, 255)
                 if success:
                     self.status.status_text = "Advance phase command sent"
@@ -203,6 +248,28 @@ class SiemensM60(Device):
         except Exception as e:
             self.status.errors.append(str(e))
             return False
+
+    async def _probe_command_target(self, oid: str, label: str) -> bool:
+        """Safely validate command target OID existence with GET only (no writes)."""
+        target = await UdpTransportTarget.create(
+            (self.config.ip_address, self.config.port),
+            timeout=self.config.timeout_seconds,
+            retries=self.config.retries,
+        )
+        current_value = await self._safe_get_oid(target, oid)
+        probe_ok = current_value is not None
+        self.status.raw_data["last_command_probe"] = {
+            "label": label,
+            "oid": oid,
+            "exists": probe_ok,
+            "current_value": current_value,
+        }
+        if probe_ok:
+            self.status.status_text = f"Probe OK for {oid}"
+            return True
+        self.status.errors.append(f"Probe failed for {oid}")
+        self.status.status_text = f"Probe failed for {oid}"
+        return False
 
     async def _set_snmp(self, oid: str, value: int) -> bool:
         """Helper for SNMP SET operations."""

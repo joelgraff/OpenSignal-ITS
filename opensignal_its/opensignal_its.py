@@ -13,6 +13,9 @@ class TrafficState(rx.State):
     status_text: str = "No status yet"
     active_snmp_version: str = "unknown"
     current_pattern: str = "Unknown"
+    unit_status: str = "unknown"
+    phase_summary: str = "none active"
+    detector_summary: str = "none active"
     is_online: bool = False
     last_updated: str = ""
     error: str = ""
@@ -23,6 +26,7 @@ class TrafficState(rx.State):
     snmp_version: str = "auto"
     timeout_text: str = "3"
     retries_text: str = "1"
+    safe_command_probe: bool = True
 
     def update_ip_address(self, value: str):
         self.ip_address = value
@@ -41,6 +45,9 @@ class TrafficState(rx.State):
 
     def update_retries_text(self, value: str):
         self.retries_text = value
+
+    def update_safe_command_probe(self, value: bool):
+        self.safe_command_probe = value
 
     def _build_config(self) -> DeviceConfig:
         port = int(self.port_text)
@@ -92,6 +99,9 @@ class TrafficState(rx.State):
             self.last_updated = str(self.m60_status.get("timestamp", ""))
             raw_data = self.m60_status.get("raw_data", {})
             self.current_pattern = str(raw_data.get("current_pattern", "Unknown"))
+            self.unit_status = str(raw_data.get("unit_status", "unknown"))
+            self.phase_summary = str(raw_data.get("phase_summary", "none active"))
+            self.detector_summary = str(raw_data.get("detector_summary", "none active"))
             self.active_snmp_version = "v2c" if getattr(device, "_mp_model", 1) == 1 else "v1"
             errors = self.m60_status.get("errors", [])
             self.error = "; ".join(errors) if errors else ""
@@ -119,14 +129,26 @@ class TrafficState(rx.State):
 
             success = False
             if cmd_type == "select_pattern":
-                success = await device.command("select_pattern", {"pattern": value})
+                success = await device.command(
+                    "select_pattern",
+                    {"pattern": value, "probe_only": self.safe_command_probe},
+                )
                 self.error = "" if success else "Failed to select pattern"
             elif cmd_type == "set_mode":
-                success = await device.command("set_mode", {"mode": value})
+                success = await device.command(
+                    "set_mode",
+                    {"mode": value, "probe_only": self.safe_command_probe},
+                )
             elif cmd_type == "manual_hold":
-                success = await device.command("manual_hold", {"hold": value})
+                success = await device.command(
+                    "manual_hold",
+                    {"hold": value, "probe_only": self.safe_command_probe},
+                )
             elif cmd_type == "advance_phase":
-                success = await device.command("advance_phase", {})
+                success = await device.command(
+                    "advance_phase",
+                    {"probe_only": self.safe_command_probe},
+                )
             
             if success:
                 self.m60_status = (await device.poll()).model_dump(mode="json")
@@ -136,6 +158,9 @@ class TrafficState(rx.State):
                 self.last_updated = str(self.m60_status.get("timestamp", ""))
                 raw_data = self.m60_status.get("raw_data", {})
                 self.current_pattern = str(raw_data.get("current_pattern", "Unknown"))
+                self.unit_status = str(raw_data.get("unit_status", "unknown"))
+                self.phase_summary = str(raw_data.get("phase_summary", "none active"))
+                self.detector_summary = str(raw_data.get("detector_summary", "none active"))
                 self.active_snmp_version = "v2c" if getattr(device, "_mp_model", 1) == 1 else "v1"
             else:
                 self.error = self.error or f"Command failed: {cmd_type}"
@@ -210,9 +235,21 @@ def index():
             spacing="3",
             wrap="wrap",
         ),
+        rx.hstack(
+            rx.switch(
+                checked=TrafficState.safe_command_probe,
+                on_change=TrafficState.update_safe_command_probe,
+            ),
+            rx.text("Safe Command Probe (no SNMP SET writes)"),
+            spacing="2",
+            align="center",
+        ),
         rx.button("Connect & Poll Siemens M60", on_click=TrafficState.add_and_poll_m60),
         timing_panel(
             TrafficState.current_pattern,
+            TrafficState.unit_status,
+            TrafficState.phase_summary,
+            TrafficState.detector_summary,
             TrafficState.status_text,
             TrafficState.select_pattern_1,
             TrafficState.select_pattern_2,
@@ -255,6 +292,10 @@ def dashboard():
         rx.hstack(
             rx.badge(rx.cond(TrafficState.is_online, "ONLINE", "OFFLINE"), color_scheme=rx.cond(TrafficState.is_online, "green", "red")),
             rx.text(f"SNMP: {TrafficState.active_snmp_version}"),
+            rx.badge(
+                rx.cond(TrafficState.safe_command_probe, "PROBE MODE", "WRITE MODE"),
+                color_scheme=rx.cond(TrafficState.safe_command_probe, "amber", "red"),
+            ),
             rx.text(f"Updated: {TrafficState.last_updated}"),
             spacing="4",
             width="100%",
@@ -269,6 +310,9 @@ def dashboard():
             rx.text(TrafficState.status_text),
             timing_panel(
                 TrafficState.current_pattern,
+                TrafficState.unit_status,
+                TrafficState.phase_summary,
+                TrafficState.detector_summary,
                 TrafficState.status_text,
                 TrafficState.select_pattern_1,
                 TrafficState.select_pattern_2,
