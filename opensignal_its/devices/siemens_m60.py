@@ -3,11 +3,13 @@
 from pysnmp.hlapi.asyncio import (
     CommunityData,
     ContextData,
+    Integer32,
     ObjectIdentity,
     ObjectType,
     SnmpEngine,
     UdpTransportTarget,
     get_cmd,
+    set_cmd,
 )
 from typing import Dict, Any
 from .base import Device
@@ -109,7 +111,64 @@ class SiemensM60(Device):
             return self.status
 
     async def command(self, command: str, params: Dict[str, Any]) -> bool:
-        """Example: Change timing plan or manual control."""
-        # TODO: Implement SET operations + Telnet fallback
-        print(f"[M60 Command] {command} with {params}")
-        return True
+        """Execute timing and control commands."""
+        try:
+            if command == "select_pattern":
+                pattern = int(params.get("pattern", 1))
+                # NTCIP 1202: System Pattern Control (example OID).
+                success = await self._set_snmp("1.3.6.1.4.1.1206.4.2.1.8", pattern)
+                if success:
+                    self.status.status_text = f"Pattern {pattern} selected"
+                return success
+
+            if command == "set_mode":
+                mode = str(params.get("mode", "")).lower()
+                # Placeholder mapping, update with validated MIB objects for your controller.
+                mode_value = 2 if mode == "coordinated" else 1
+                success = await self._set_snmp("1.3.6.1.4.1.1206.4.2.1.8", mode_value)
+                if success:
+                    self.status.status_text = f"Mode set to {mode or 'unknown'}"
+                return success
+
+            if command == "manual_hold":
+                hold = bool(params.get("hold", True))
+                success = await self._set_snmp("1.3.6.1.4.1.1206.4.2.1.9", 1 if hold else 0)
+                if success:
+                    self.status.status_text = "Manual hold command sent"
+                return success
+
+            if command == "advance_phase":
+                success = await self._set_snmp("1.3.6.1.4.1.1206.4.2.1.10", 1)
+                if success:
+                    self.status.status_text = "Advance phase command sent"
+                return success
+
+            self.status.errors.append(f"Unknown command: {command}")
+            return False
+        except Exception as e:
+            self.status.errors.append(str(e))
+            return False
+
+    async def _set_snmp(self, oid: str, value: int) -> bool:
+        """Helper for SNMP SET operations."""
+        try:
+            target = await UdpTransportTarget.create(
+                (self.config.ip_address, self.config.port),
+                timeout=self.config.timeout_seconds,
+                retries=self.config.retries,
+            )
+            iterator = set_cmd(
+                self._snmp_engine,
+                CommunityData(self.config.community, mpModel=self._mp_model),
+                target,
+                ContextData(),
+                ObjectType(ObjectIdentity(oid), Integer32(int(value))),
+            )
+            error_indication, error_status, _, _ = await iterator
+            if error_indication or error_status:
+                self.status.errors.append(str(error_indication or error_status))
+                return False
+            return True
+        except Exception as e:
+            self.status.errors.append(str(e))
+            return False
