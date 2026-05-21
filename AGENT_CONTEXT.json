@@ -1,105 +1,61 @@
 {
   "project": "OpenSignal ITS",
-  "last_updated": "2026-05-21T17:20:00Z",
-  "version": "0.2.0-dev",
-  "status": "Early MVP - Siemens M60 connect/poll dashboard and command panel wired",
-  "source_of_truth": {
-    "project_context": "opensignal_its/PROJECT_CONTEXT.md",
-    "architecture_context": "opensignal_its/OpenSignal ITS - Project Context.md",
-    "grok_onboarding_prompt": "opensignal_its/GROK_ONBOARDING_PROMPT.md"
-  },
-  "runtime_observations": {
-    "snmp_v2c": "timeout on current Siemens M60 target",
-    "snmp_v1": "successful connect/poll on current Siemens M60 target"
-  },
+  "last_updated": "2026-05-21T17:35:00Z",
+  "version": "0.2.2-dev",
+  "status": "MVP core functional: M60 SNMP connect/poll + timing commands with documented core OID set",
+
   "architecture": {
     "core_pattern": "Abstract Device base class with registry + factory",
-    "layers_implemented": [
-      "models",
-      "devices",
-      "components"
-    ],
-    "layers_planned": [
-      "protocols",
-      "services",
-      "states",
-      "db",
-      "tests"
-    ],
+    "layers": ["models", "devices", "protocols", "services", "components", "states"],
     "ui_framework": "Reflex",
-    "database": "SQLite planned (not implemented)",
+    "database": "SQLite planned",
     "snmp_library": "pysnmp"
   },
+
   "current_devices": {
     "SiemensM60": {
-      "status": "implemented",
+      "status": "Implemented",
       "features": [
-        "async connect with SNMP version fallback policy",
-        "async poll with configurable timeout/retries",
-        "command dispatch with SNMP SET helper"
+        "SNMPv1 successful connection",
+        "Async connect/poll with background task",
+        "Configurable IP/port/community",
+        "Timing command buttons wired to command() method"
       ],
       "limitations": [
-        "provisional command OIDs",
-        "limited status mapping from raw OIDs",
-        "no persisted command audit yet"
+        "SNMPv2c times out (v1 working)",
+        "Command OIDs still require final Siemens field validation before production use",
+        "No persistent command audit logging yet"
       ]
     }
   },
+
   "ui_status": {
-    "dashboard": "implemented",
-    "features": [
-      "connect and refresh actions",
-      "status and error display",
-      "timing panel with command buttons",
-      "raw json status panel"
-    ],
-    "known_risks": [
-      "stale dev processes can cause frontend/backend websocket mismatch",
-      "state/service split still pending"
-    ],
-    "dev_hygiene": [
-      "Before fresh runs, kill stale reflex/node dev processes",
-      "If websocket connection errors appear, clear .web and restart a single reflex instance"
-    ]
+    "dashboard": "Good",
+    "features": ["Status cards", "Timing panel with buttons", "Connect/Refresh"]
   },
+
   "next_priorities": [
-    "validate Siemens M60 command OIDs against NTCIP 1202 and vendor docs",
-    "move Reflex state logic into states/traffic_state.py",
-    "add protocols/snmp_client.py shared helper",
-    "add command and status persistence",
-    "add baseline tests"
+    "Real NTCIP 1202 OIDs for timing + status",
+    "Folium map",
+    "Video streaming grid",
+    "Basic event logging"
   ],
+
   "division_of_labor": {
-    "planning_agent": [
-      "roadmap, architecture, OID research, requirement clarification"
-    ],
-    "coding_agent": [
-      "implementation, refactoring, integration, runtime validation"
-    ],
-    "human": [
-      "hardware testing, final decisions, merge/release"
-    ]
+    "Grok": "Planning, architecture, standards/vendor research, scoped tickets",
+    "Copilot": "Implementation, refactoring, integration",
+    "Human": "Hardware validation, decisions"
   },
-  "handoff_contract": {
-    "required_inputs": [
-      "PROJECT_CONTEXT.md",
-      "AGENT_CONTEXT.json"
-    ],
-    "implementation_ticket_format": {
-      "fields": [
-        "objective",
-        "scope_in",
-        "scope_out",
-        "acceptance_criteria",
-        "risks",
-        "notes"
-      ]
-    },
-    "required_outputs": [
-      "files_changed",
-      "runtime_validation",
-      "open_risks",
-      "context_updates_required"
-    ]
-  }
+
+  "notes_for_copilot": [
+    "Respect modular Device pattern strictly",
+    "Prefer async",
+    "All control commands need safety logging",
+    "Read PROJECT_CONTEXT.md + this file first"
+  ],
+
+  "notes_for_grok": [
+    "SNMPv1 works, v2c times out on target M60",
+    "Focus on safe, bounded tickets"
+  ]
 }

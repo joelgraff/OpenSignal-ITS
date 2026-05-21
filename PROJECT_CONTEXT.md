@@ -26,9 +26,9 @@ OpenSignal ITS is a Python-first traffic controller management platform built wi
 
 ## Immediate Development Focus
 1. Stabilize state updates and dashboard telemetry.
-2. Migrate state orchestration to states/traffic_state.py.
+2. Migrate state orchestration to opensignal_its/states/traffic_state.py.
 3. Add shared SNMP protocol helper module.
-4. Add command history + status snapshot persistence in db/.
+4. Add command history + status snapshot persistence in opensignal_its/db/.
 5. Add baseline tests for connect/poll/command flows.
 
 ## Agent Handoff
