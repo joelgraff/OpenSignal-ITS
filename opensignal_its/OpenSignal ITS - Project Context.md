@@ -51,6 +51,50 @@ Target users: Traffic engineers, DOTs, municipalities.
 - Base Device + SiemensM60 driver implemented.
 - Basic dashboard with status cards and timing control panel.
 - Reflex app structure using `opensignal_its` module name.
+- SNMP connectivity observed: v1 succeeds against current Siemens M60, v2c times out.
+- Timing command path exists end-to-end (UI -> state -> device command -> SNMP SET), but command OIDs are still provisional and must be validated against Siemens documentation.
+
+## Architecture Reality Check (Important)
+- `devices/`, `models/`, and `components/` are active and usable.
+- `protocols/`, `services/`, `db/`, and `tests/` are currently not implemented yet.
+- Reflex state and orchestration currently live mostly in `opensignal_its.py`; migration to `states/` should be prioritized.
+
+## Operational Safety Policy (Required)
+- Treat all write commands as high-impact operations.
+- Only allowlist known command names and validated OIDs.
+- Require command logging (timestamp, target, parameters, result, error).
+- Add user confirmation before high-risk actions (mode/pattern/state changes).
+- Keep all command OIDs documented with source reference (MIB section/vendor doc).
+
+## Near-Term Milestones
+### M1 - State and UI Separation
+- Move `TrafficState` from `opensignal_its.py` into `states/traffic_state.py`.
+- Keep `opensignal_its.py` focused on page composition and routing.
+
+### M2 - Protocol Layer
+- Add `protocols/snmp_client.py` with shared async GET/SET helpers.
+- Centralize retry/timeout/version fallback behavior.
+
+### M3 - Service Layer and Polling
+- Add `services/polling_service.py` for periodic refresh.
+- Add `services/command_service.py` to validate and execute commands.
+
+### M4 - Persistence and Audit
+- Add SQLite models for command history and status snapshots.
+- Persist every command and periodic status sample.
+
+### M5 - Testing Baseline
+- Add smoke tests for connect, poll, and command translation.
+- Add regression tests for SNMP v1/v2c behavior and failure messaging.
+
+## File-by-File Execution Checklist
+- `opensignal_its/opensignal_its.py`: Reduce to app/page wiring and component assembly.
+- `opensignal_its/states/traffic_state.py`: Main state actions (`connect`, `refresh`, `send_command`, UI state fields).
+- `opensignal_its/protocols/snmp_client.py`: Shared SNMP primitives (get/set, target creation, error normalization).
+- `opensignal_its/services/polling_service.py`: Realtime polling cadence and task lifecycle.
+- `opensignal_its/services/command_service.py`: Allowlisted command schema and dispatch.
+- `opensignal_its/db/`: Status/command persistence models and repository helpers.
+- `opensignal_its/tests/`: Unit and smoke tests for state, device, and protocol paths.
 
 ## Coding Guidelines
 - Use type hints everywhere.
@@ -64,7 +108,17 @@ Target users: Traffic engineers, DOTs, municipalities.
 - Siemens M60 SNMP/Telnet documentation (you have access).
 - Reflex docs for State, components, and dynamic UI.
 
+## Canonical Agent Context Files
+- `PROJECT_CONTEXT.md` is the concise execution source of truth.
+- `AGENT_CONTEXT.json` is the machine-readable handoff contract between planning and coding agents.
+- Update both files whenever runtime behavior, architecture status, or priorities materially change.
+
 ---
 
 **Instructions for Copilot / AI Agents:**
 Always read this file first. When adding new features, follow the modular device driver pattern. Ask for clarification if something conflicts with the architecture.
+
+**Required startup read order for coding sessions:**
+1. `PROJECT_CONTEXT.md`
+2. `AGENT_CONTEXT.json`
+3. This file (`OpenSignal ITS - Project Context.md`) for extended architecture rationale.

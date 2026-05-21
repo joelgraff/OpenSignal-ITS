@@ -1,0 +1,105 @@
+{
+  "project": "OpenSignal ITS",
+  "last_updated": "2026-05-21T17:20:00Z",
+  "version": "0.2.0-dev",
+  "status": "Early MVP - Siemens M60 connect/poll dashboard and command panel wired",
+  "source_of_truth": {
+    "project_context": "opensignal_its/PROJECT_CONTEXT.md",
+    "architecture_context": "opensignal_its/OpenSignal ITS - Project Context.md",
+    "grok_onboarding_prompt": "opensignal_its/GROK_ONBOARDING_PROMPT.md"
+  },
+  "runtime_observations": {
+    "snmp_v2c": "timeout on current Siemens M60 target",
+    "snmp_v1": "successful connect/poll on current Siemens M60 target"
+  },
+  "architecture": {
+    "core_pattern": "Abstract Device base class with registry + factory",
+    "layers_implemented": [
+      "models",
+      "devices",
+      "components"
+    ],
+    "layers_planned": [
+      "protocols",
+      "services",
+      "states",
+      "db",
+      "tests"
+    ],
+    "ui_framework": "Reflex",
+    "database": "SQLite planned (not implemented)",
+    "snmp_library": "pysnmp"
+  },
+  "current_devices": {
+    "SiemensM60": {
+      "status": "implemented",
+      "features": [
+        "async connect with SNMP version fallback policy",
+        "async poll with configurable timeout/retries",
+        "command dispatch with SNMP SET helper"
+      ],
+      "limitations": [
+        "provisional command OIDs",
+        "limited status mapping from raw OIDs",
+        "no persisted command audit yet"
+      ]
+    }
+  },
+  "ui_status": {
+    "dashboard": "implemented",
+    "features": [
+      "connect and refresh actions",
+      "status and error display",
+      "timing panel with command buttons",
+      "raw json status panel"
+    ],
+    "known_risks": [
+      "stale dev processes can cause frontend/backend websocket mismatch",
+      "state/service split still pending"
+    ],
+    "dev_hygiene": [
+      "Before fresh runs, kill stale reflex/node dev processes",
+      "If websocket connection errors appear, clear .web and restart a single reflex instance"
+    ]
+  },
+  "next_priorities": [
+    "validate Siemens M60 command OIDs against NTCIP 1202 and vendor docs",
+    "move Reflex state logic into states/traffic_state.py",
+    "add protocols/snmp_client.py shared helper",
+    "add command and status persistence",
+    "add baseline tests"
+  ],
+  "division_of_labor": {
+    "planning_agent": [
+      "roadmap, architecture, OID research, requirement clarification"
+    ],
+    "coding_agent": [
+      "implementation, refactoring, integration, runtime validation"
+    ],
+    "human": [
+      "hardware testing, final decisions, merge/release"
+    ]
+  },
+  "handoff_contract": {
+    "required_inputs": [
+      "PROJECT_CONTEXT.md",
+      "AGENT_CONTEXT.json"
+    ],
+    "implementation_ticket_format": {
+      "fields": [
+        "objective",
+        "scope_in",
+        "scope_out",
+        "acceptance_criteria",
+        "risks",
+        "notes"
+      ]
+    },
+    "required_outputs": [
+      "files_changed",
+      "runtime_validation",
+      "open_risks",
+      "context_updates_required"
+    ]
+  }
+}
