@@ -12,6 +12,7 @@ class DeviceStatus(BaseModel):
     is_online: bool = False
     status_text: str = "Unknown"
     raw_data: Dict[str, Any] = Field(default_factory=dict)
+    extra: Dict[str, Any] = Field(default_factory=dict)
     errors: list[str] = Field(default_factory=list)
 
 

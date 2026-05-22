@@ -1,0 +1,74 @@
+{
+  "controller": "Siemens M60 / SEPAC 5.2.0",
+  "protocol": "SNMPv1",
+  "community": "public",
+  "oids": [
+    {
+      "oid": "1.3.6.1.2.1.1.1.0",
+      "name": "sysDescr",
+      "description": "Controller description and firmware version",
+      "type": "String",
+      "parsing": "Direct string",
+      "priority": "High",
+      "example": "SEPAC 5.2.0   (JUN 2019), NTCIP Class B"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.2.2.1.1.9.0",
+      "name": "currentPattern",
+      "description": "Currently running timing pattern",
+      "type": "Integer",
+      "parsing": "Direct integer value",
+      "priority": "High",
+      "example": 2
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.2.2.1.1.7.0",
+      "name": "unitControlStatus",
+      "description": "Overall controller mode/status",
+      "type": "Integer",
+      "parsing": "1 = Normal operation",
+      "priority": "High"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.3.3.1.1.1.1.1.{phase}",
+      "name": "phaseStatusGroup",
+      "description": "Real-time phase indication status (per phase 1-16)",
+      "type": "Integer (bitmask)",
+      "parsing": "Bitfield: 0b0001=Green, 0b0010=Yellow, 0b0100=Red, etc.",
+      "priority": "Critical",
+      "note": "Replace {phase} with 1 to 16"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.3.3.1.1.3.1.2.{phase}",
+      "name": "vehicleCall",
+      "description": "Vehicle call present on phase",
+      "type": "Integer",
+      "parsing": "Non-zero = call active",
+      "priority": "High"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.3.3.1.1.3.1.3.{phase}",
+      "name": "pedCall",
+      "description": "Pedestrian call present",
+      "type": "Integer",
+      "parsing": "Non-zero = ped call active",
+      "priority": "High"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.3.3.1.1.5.2.{phase}",
+      "name": "timeToChange",
+      "description": "Time remaining in current phase (seconds)",
+      "type": "Integer",
+      "parsing": "Direct seconds",
+      "priority": "High"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.3.3.1.1.9.2.{phase}",
+      "name": "cycleTimer",
+      "description": "Coordination / cycle related timer",
+      "type": "Integer",
+      "parsing": "Direct value",
+      "priority": "Medium"
+    }
+  ]
+}

@@ -13,18 +13,62 @@ from pysnmp.hlapi.asyncio import (
 )
 from typing import Dict, Any
 import logging
+import json
+from pathlib import Path
 from .base import Device
 from ..models.device import DeviceStatus, DeviceConfig
 
 
 logger = logging.getLogger(__name__)
 
+
+def _load_oid_reference() -> dict[str, str]:
+    """Load OID definitions from docs, with graceful fallback to hardcoded defaults."""
+    docs_dir = Path(__file__).resolve().parent.parent / "docs"
+    candidates = [
+        docs_dir / "M60_OID_REFERENCE.json",
+        docs_dir / "m60_oid_table.json",
+    ]
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text())
+            mapping: dict[str, str] = {}
+            for item in payload.get("oids", []):
+                name = str(item.get("name", "")).strip()
+                oid = str(item.get("oid", "")).strip()
+                if name and oid:
+                    mapping[name] = oid
+            if mapping:
+                logger.info("Loaded %s OID entries from %s", len(mapping), path.name)
+                return mapping
+        except Exception:
+            logger.exception("Failed parsing OID reference file: %s", path)
+    return {}
+
+
+_OID_REF = _load_oid_reference()
+
+
+def _oid(name: str, fallback: str) -> str:
+    return _OID_REF.get(name, fallback)
+
 # Confirmed working objects from SEPAC 5.2.0 walk and SNMPv1 probe.
-OID_SYS_DESCR = "1.3.6.1.2.1.1.1.0"  # SNMPv2-MIB::sysDescr.0
-OID_CURRENT_PATTERN = "1.3.6.1.4.1.1206.2.2.1.1.9.0"
-OID_UNIT_STATUS = "1.3.6.1.4.1.1206.2.2.1.1.7.0"
-OID_PHASE_STATUS_BASE = "1.3.6.1.4.1.1206.3.3.1.1.1.1.8"
-OID_DETECTOR_STATUS_BASE = "1.3.6.1.4.1.1206.3.3.1.2.1.1.1"
+OID_SYS_DESCR = _oid("sysDescr", "1.3.6.1.2.1.1.1.0")
+OID_CURRENT_PATTERN = _oid("currentPattern", "1.3.6.1.4.1.1206.2.2.1.1.9.0")
+OID_UNIT_STATUS = _oid("unitControlStatus", "1.3.6.1.4.1.1206.2.2.1.1.7.0")
+# Known-good table templates observed on target walk (SEPAC 5.2.0).
+OID_PHASE_STATUS_TEMPLATE = "1.3.6.1.4.1.1206.3.3.1.1.1.1.8.{phase}"
+OID_VEH_CALL_TEMPLATE = "1.3.6.1.4.1.1206.3.3.1.1.3.1.2.2.{phase}"
+OID_PED_CALL_TEMPLATE = "1.3.6.1.4.1.1206.3.3.1.1.3.1.3.2.{phase}"
+OID_TIME_REMAINING_TEMPLATE = "1.3.6.1.4.1.1206.3.3.1.1.3.1.5.2.{phase}"
+
+# Reference templates from docs (used only if walk-confirmed templates fail).
+OID_PHASE_STATUS_TEMPLATE_REF = _oid("phaseStatusGroup", "1.3.6.1.4.1.1206.3.3.1.1.1.1.1.{phase}")
+OID_VEH_CALL_TEMPLATE_REF = _oid("vehicleCall", "1.3.6.1.4.1.1206.3.3.1.1.3.1.2.{phase}")
+OID_PED_CALL_TEMPLATE_REF = _oid("pedCall", "1.3.6.1.4.1.1206.3.3.1.1.3.1.3.{phase}")
+OID_TIME_REMAINING_TEMPLATE_REF = _oid("timeToChange", "1.3.6.1.4.1.1206.3.3.1.1.5.2.{phase}")
 
 # NTCIP 1202 timing/control objects (common scalar controls).
 # NOTE: Vendor implementations can vary. Validate on target Siemens M60 docs before production rollout.
@@ -137,30 +181,106 @@ class SiemensM60(Device):
             current_pattern_raw = await self._safe_get_oid(target, OID_CURRENT_PATTERN)
             unit_status_raw = await self._safe_get_oid(target, OID_UNIT_STATUS)
 
-            phase_status: dict[str, int] = {}
-            for phase in range(1, 9):
-                oid = f"{OID_PHASE_STATUS_BASE}.{phase}"
-                phase_status[str(phase)] = self._to_int(await self._safe_get_oid(target, oid)) or 0
+            phases: dict[str, dict[str, Any]] = {}
+            raw_phase_status: dict[str, int] = {}
+            active_vehicle_calls: list[int] = []
+            active_ped_calls: list[int] = []
+            green_phases: list[int] = []
+            yellow_phases: list[int] = []
+            red_phases: list[int] = []
+            time_remaining: dict[str, int] = {}
 
-            detectors: dict[str, int] = {}
-            for detector in range(1, 9):
-                oid = f"{OID_DETECTOR_STATUS_BASE}.{detector}"
-                detectors[str(detector)] = self._to_int(await self._safe_get_oid(target, oid)) or 0
+            for phase in range(1, 17):
+                status_oid = OID_PHASE_STATUS_TEMPLATE.format(phase=phase)
+                veh_call_oid = OID_VEH_CALL_TEMPLATE.format(phase=phase)
+                ped_call_oid = OID_PED_CALL_TEMPLATE.format(phase=phase)
+                timer_oid = OID_TIME_REMAINING_TEMPLATE.format(phase=phase)
+
+                status_val = self._to_int(await self._safe_get_oid(target, status_oid))
+                if status_val is None:
+                    status_oid = OID_PHASE_STATUS_TEMPLATE_REF.format(phase=phase)
+                    status_val = self._to_int(await self._safe_get_oid(target, status_oid))
+
+                veh_call_val = self._to_int(await self._safe_get_oid(target, veh_call_oid))
+                if veh_call_val is None:
+                    veh_call_oid = OID_VEH_CALL_TEMPLATE_REF.format(phase=phase)
+                    veh_call_val = self._to_int(await self._safe_get_oid(target, veh_call_oid))
+
+                ped_call_val = self._to_int(await self._safe_get_oid(target, ped_call_oid))
+                if ped_call_val is None:
+                    ped_call_oid = OID_PED_CALL_TEMPLATE_REF.format(phase=phase)
+                    ped_call_val = self._to_int(await self._safe_get_oid(target, ped_call_oid))
+
+                timer_val = self._to_int(await self._safe_get_oid(target, timer_oid))
+                if timer_val is None:
+                    timer_oid = OID_TIME_REMAINING_TEMPLATE_REF.format(phase=phase)
+                    timer_val = self._to_int(await self._safe_get_oid(target, timer_oid))
+
+                status_val = status_val or 0
+                veh_call_val = veh_call_val or 0
+                ped_call_val = ped_call_val or 0
+                timer_val = timer_val or 0
+
+                is_green = bool(status_val & 0b0001)
+                is_yellow = bool(status_val & 0b0010)
+                is_red = bool(status_val & 0b0100)
+                has_veh_call = veh_call_val != 0
+                has_ped_call = ped_call_val != 0
+
+                if is_green:
+                    green_phases.append(phase)
+                if is_yellow:
+                    yellow_phases.append(phase)
+                if is_red:
+                    red_phases.append(phase)
+                if has_veh_call:
+                    active_vehicle_calls.append(phase)
+                if has_ped_call:
+                    active_ped_calls.append(phase)
+
+                phase_key = str(phase)
+                raw_phase_status[phase_key] = status_val
+                time_remaining[phase_key] = timer_val
+                phases[phase_key] = {
+                    "green": is_green,
+                    "yellow": is_yellow,
+                    "red": is_red,
+                    "vehicle_call": has_veh_call,
+                    "ped_call": has_ped_call,
+                    "time_remaining": timer_val,
+                    "raw_status": status_val,
+                }
 
             current_pattern = self._to_int(current_pattern_raw)
             unit_status_code = self._to_int(unit_status_raw)
-            active_phases = [phase for phase, state in phase_status.items() if state > 0]
-            active_detectors = [det for det, state in detectors.items() if state > 0]
+            phase_summary = {
+                "green": green_phases,
+                "yellow": yellow_phases,
+                "red": red_phases,
+                "vehicle_calls": active_vehicle_calls,
+                "ped_calls": active_ped_calls,
+            }
+
+            self.status.extra = {
+                "current_pattern": current_pattern or 0,
+                "unit_status": unit_status_code or 0,
+                "phases": phases,
+                "timers": time_remaining,
+                "phase_summary": phase_summary,
+            }
 
             self.status.raw_data = {
                 "sys_descr": sys_descr or "unavailable",
                 "current_pattern": str(current_pattern) if current_pattern is not None else "Unknown",
                 "unit_status_code": unit_status_code,
                 "unit_status": self._unit_status_text(unit_status_code),
-                "phase_status": phase_status,
-                "phase_summary": ", ".join(active_phases) if active_phases else "none active",
-                "detectors": detectors,
-                "detector_summary": ", ".join(active_detectors) if active_detectors else "none active",
+                "phase_status": raw_phase_status,
+                "green_phases": ", ".join(str(p) for p in green_phases) if green_phases else "none",
+                "yellow_phases": ", ".join(str(p) for p in yellow_phases) if yellow_phases else "none",
+                "red_phases": ", ".join(str(p) for p in red_phases) if red_phases else "none",
+                "vehicle_calls": ", ".join(str(p) for p in active_vehicle_calls) if active_vehicle_calls else "none",
+                "ped_calls": ", ".join(str(p) for p in active_ped_calls) if active_ped_calls else "none",
+                "time_remaining": time_remaining,
             }
 
             if current_pattern is None and unit_status_code is None and sys_descr is None:
