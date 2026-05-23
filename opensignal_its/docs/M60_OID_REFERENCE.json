@@ -1,0 +1,92 @@
+{
+  "controller": "Siemens M60 / SEPAC 5.2.0",
+  "protocol": "SNMPv1",
+  "community": "public",
+  "oids": [
+    {
+      "oid": "1.3.6.1.2.1.1.1.0",
+      "name": "sysDescr",
+      "description": "Controller description and firmware version"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.2.2.1.1.9.0",
+      "name": "currentPattern",
+      "description": "Currently running timing pattern"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.2.2.1.1.7.0",
+      "name": "unitControlStatus",
+      "description": "Overall controller mode/status"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.3.3.1.1.1.1.8.{phase}",
+      "name": "phaseStatusLive",
+      "description": "Live per-phase status bitmask (walk-confirmed on SEPAC 5.2.0)"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.3.3.1.1.3.1.2.2.{phase}",
+      "name": "vehicleCallLive",
+      "description": "Live per-phase vehicle call (walk-confirmed on SEPAC 5.2.0)"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.3.3.1.1.3.1.3.2.{phase}",
+      "name": "pedCallLive",
+      "description": "Live per-phase pedestrian call (walk-confirmed on SEPAC 5.2.0)"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.3.3.1.1.3.1.5.2.{phase}",
+      "name": "timerLive",
+      "description": "Live per-phase timer value (walk-confirmed on SEPAC 5.2.0)"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.4.2.1.1.2.1.6.{phase}",
+      "name": "phaseMaximum1",
+      "description": "Phase maximum green 1 parameter used for estimated countdown"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.4.2.1.7.6.1.1.{ring}",
+      "name": "ringStatus",
+      "description": "NTCIP ringStatus coded timer state and transition flags (ring index)"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.4.2.1.1.4.1.4.{group}",
+      "name": "phaseStatusGroupGreens",
+      "description": "NTCIP phase status green bitmask by phase group"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.4.2.1.1.4.1.2.{group}",
+      "name": "phaseStatusGroupReds",
+      "description": "NTCIP phase status red bitmask by phase group"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.4.2.1.1.4.1.8.{group}",
+      "name": "phaseStatusGroupVehCalls",
+      "description": "NTCIP vehicle call bitmask by phase group"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.4.2.1.1.4.1.9.{group}",
+      "name": "phaseStatusGroupPedCalls",
+      "description": "NTCIP pedestrian call bitmask by phase group"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.3.3.1.1.1.1.1.{phase}",
+      "name": "phaseStatusGroup",
+      "description": "Reference phase status object template"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.3.3.1.1.3.1.2.{phase}",
+      "name": "vehicleCall",
+      "description": "Reference vehicle call object template"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.3.3.1.1.3.1.3.{phase}",
+      "name": "pedCall",
+      "description": "Reference pedestrian call object template"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.3.3.1.1.5.2.{phase}",
+      "name": "timeToChange",
+      "description": "Reference time-to-change object template"
+    }
+  ]
+}

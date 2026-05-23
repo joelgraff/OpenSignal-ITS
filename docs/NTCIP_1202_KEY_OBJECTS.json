@@ -1,0 +1,103 @@
+{
+  "standard": "NTCIP 1202 v03.35e",
+  "title": "Key Objects for Real-Time ASC Monitoring",
+  "controller_note": "Siemens M60 / SEPAC 5.2.0 (uses mix of standard NTCIP + Siemens private OIDs)",
+  "objects": [
+    {
+      "oid": "1.3.6.1.2.1.1.1.0",
+      "name": "sysDescr",
+      "group": "System",
+      "description": "Controller description and firmware version",
+      "type": "OCTET STRING",
+      "parsing": "Direct string",
+      "priority": "High",
+      "pdf_page": "294"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.4.2.1.1",
+      "name": "unitControlStatus",
+      "group": "Unit",
+      "description": "Overall controller operational status",
+      "type": "Integer",
+      "parsing": "1 = Normal, other values indicate special modes",
+      "priority": "High",
+      "pdf_page": "278"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.4.2.1.8",
+      "name": "systemPatternControl",
+      "group": "Coordination",
+      "description": "Currently active timing pattern",
+      "type": "Integer",
+      "parsing": "Direct pattern number (e.g. 2)",
+      "priority": "High",
+      "pdf_page": "314"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.4.2.1.1.4.1.2",
+      "name": "phaseStatusGroupReds",
+      "group": "Phase Status",
+      "description": "Phase Red indications (bitmask per group of 8)",
+      "type": "Integer (bitmask)",
+      "parsing": "Bit set = Red active",
+      "priority": "Critical",
+      "pdf_page": "242-245"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.4.2.1.1.4.1.4",
+      "name": "phaseStatusGroupGreens",
+      "group": "Phase Status",
+      "description": "Phase Green indications (bitmask)",
+      "type": "Integer (bitmask)",
+      "parsing": "Bit set = Green active",
+      "priority": "Critical",
+      "pdf_page": "242-245"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.4.2.1.1.4.1.8",
+      "name": "phaseStatusGroupVehCalls",
+      "group": "Phase Status",
+      "description": "Vehicle calls per phase (bitmask)",
+      "type": "Integer (bitmask)",
+      "parsing": "Bit set = Vehicle call active",
+      "priority": "Critical",
+      "pdf_page": "242-245"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.4.2.1.1.4.1.9",
+      "name": "phaseStatusGroupPedCalls",
+      "group": "Phase Status",
+      "description": "Pedestrian calls per phase (bitmask)",
+      "type": "Integer (bitmask)",
+      "parsing": "Bit set = Ped call active",
+      "priority": "High",
+      "pdf_page": "242-245"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.4.2.3.5",
+      "name": "phaseTimeToChange",
+      "group": "Timers",
+      "description": "Time remaining until phase change (per phase)",
+      "type": "Integer",
+      "parsing": "Seconds remaining",
+      "priority": "High",
+      "pdf_page": "420-430"
+    },
+    {
+      "oid": "1.3.6.1.4.1.1206.4.2.1.10",
+      "name": "coordinationCycleStatus",
+      "group": "Coordination",
+      "description": "Current cycle timer / offset",
+      "type": "Integer",
+      "parsing": "Direct value (often seconds into cycle)",
+      "priority": "Medium",
+      "pdf_page": "314"
+    }
+  ],
+  "parsing_guidance": {
+    "bitmask": "For phase groups, each 8 phases are usually in one Integer. Bit 0 (LSB) typically corresponds to the lowest phase in the group.",
+    "tables": "Many objects are in tables indexed by phase number (1-16) or group.",
+    "sepac_note": "Your controller mixes standard NTCIP objects with Siemens private extensions under 1.3.6.1.4.1.1206.2 and 1206.3"
+  },
+  "recommendation": "Start with sysDescr, currentPattern, phaseStatusGroupGreens/Reds, and phaseStatusGroupVehCalls for immediate real-time value."
+}

@@ -1,0 +1,57 @@
+warning: `VIRTUAL_ENV=/home/d2ops-dp/Projects/opensignal-its/.venv` does not match the project environment path `.venv` and will be ignored; use `--active` to target the active environment instead
+───────────── Starting Reflex App ──────────────
+Warning: Unable to bind to :3000 due to: [Errno 
+98] Address already in use.
+Warning: Unable to bind to :3001 due to: [Errno 
+98] Address already in use.
+Info: The frontend will run on port 3002.
+Warning: Unable to bind to :8000 due to: [Errno 
+98] Address already in use.
+Warning: Unable to bind to :8001 due to: [Errno 
+98] Address already in use.
+Info: The backend will run on port 8002.
+Traceback (most recent call last):
+  File "/home/d2ops-dp/Projects/opensignal_its/.venv/lib/python3.12/site-packages/reflex/utils/prerequisites.py", line 351, in compile_or_validate_app
+    get_compiled_app(
+  File "/home/d2ops-dp/Projects/opensignal_its/.venv/lib/python3.12/site-packages/reflex/utils/prerequisites.py", line 270, in get_compiled_app
+    app._compile(prerender_routes=prerender_routes, dry_run=dry_run, use_rich=use_rich)
+  File "/home/d2ops-dp/Projects/opensignal_its/.venv/lib/python3.12/site-packages/reflex/app.py", line 1182, in _compile
+    compiler.compile_app(
+  File "/home/d2ops-dp/Projects/opensignal_its/.venv/lib/python3.12/site-packages/reflex/compiler/compiler.py", line 1063, in compile_app
+    compile_ctx.compile(
+  File "/home/d2ops-dp/Projects/opensignal_its/.venv/lib/python3.12/site-packages/reflex_base/plugins/compiler.py", line 804, in compile
+    page_ctx = self.hooks.eval_page(
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/d2ops-dp/Projects/opensignal_its/.venv/lib/python3.12/site-packages/reflex_base/plugins/compiler.py", line 271, in eval_page
+    result = hook_impl(page_fn, page=page, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/d2ops-dp/Projects/opensignal_its/.venv/lib/python3.12/site-packages/reflex/compiler/plugins/builtin.py", line 41, in eval_page
+    component = compiler.into_component(page_fn)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/d2ops-dp/Projects/opensignal_its/.venv/lib/python3.12/site-packages/reflex/compiler/compiler.py", line 816, in into_component
+    component_called = component()
+                       ^^^^^^^^^^^
+  File "/home/d2ops-dp/Projects/opensignal_its/opensignal_its/opensignal_its.py", line 547, in dashboard
+    phase_status_grid(TrafficState.phase_data),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/d2ops-dp/Projects/opensignal_its/opensignal_its/components/phase_status.py", line 69, in phase_status_grid
+    rx.foreach(
+  File "/home/d2ops-dp/Projects/opensignal_its/.venv/lib/python3.12/site-packages/reflex_components_core/core/foreach.py", line 115, in create
+    component.children = [component._render().render_component()]
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/d2ops-dp/Projects/opensignal_its/.venv/lib/python3.12/site-packages/reflex_base/components/tags/iter_tag.py", line 95, in render_component
+    component = self.render_fn(arg)
+                ^^^^^^^^^^^^^^^^^^^
+  File "/home/d2ops-dp/Projects/opensignal_its/opensignal_its/components/phase_status.py", line 71, in <lambda>
+    lambda p: phase_indicator(
+              ^^^^^^^^^^^^^^^^
+  File "/home/d2ops-dp/Projects/opensignal_its/opensignal_its/components/phase_status.py", line 7, in phase_indicator
+    green = data.get("green", False)
+            ^^^^^^^^
+  File "/home/d2ops-dp/Projects/opensignal_its/.venv/lib/python3.12/site-packages/reflex_base/vars/base.py", line 1915, in __getattr__
+    return next_class.__getattr__(self, name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/d2ops-dp/Projects/opensignal_its/.venv/lib/python3.12/site-packages/reflex_base/vars/base.py", line 1282, in __getattr__
+    raise VarAttributeError(msg)
+reflex_base.utils.exceptions.VarAttributeError: The State var (isTrue(opensignal_its.opensignal_its.TrafficState.phase_data?.[("Phase_"+p)]) ? opensignal_its.opensignal_its.TrafficState.phase_data?.[("Phase_"+p)] : ({ ["green"] : false, ["yellow"] : false, ["red"] : false, ["has_call"] : false, ["vehicle_call"] : false, ["ped_call"] : false, ["time_remaining"] : 0 })) of type typing.Union[typing.Any, collections.abc.Mapping[str, typing.Union\[int, bool]]] has no attribute 'get' or may have been annotated wrongly.
+Happened while evaluating page 'index'

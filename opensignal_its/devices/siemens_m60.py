@@ -59,10 +59,16 @@ OID_SYS_DESCR = _oid("sysDescr", "1.3.6.1.2.1.1.1.0")
 OID_CURRENT_PATTERN = _oid("currentPattern", "1.3.6.1.4.1.1206.2.2.1.1.9.0")
 OID_UNIT_STATUS = _oid("unitControlStatus", "1.3.6.1.4.1.1206.2.2.1.1.7.0")
 # Known-good table templates observed on target walk (SEPAC 5.2.0).
-OID_PHASE_STATUS_TEMPLATE = "1.3.6.1.4.1.1206.3.3.1.1.1.1.8.{phase}"
-OID_VEH_CALL_TEMPLATE = "1.3.6.1.4.1.1206.3.3.1.1.3.1.2.2.{phase}"
-OID_PED_CALL_TEMPLATE = "1.3.6.1.4.1.1206.3.3.1.1.3.1.3.2.{phase}"
-OID_TIME_REMAINING_TEMPLATE = "1.3.6.1.4.1.1206.3.3.1.1.3.1.5.2.{phase}"
+OID_PHASE_STATUS_TEMPLATE = _oid("phaseStatusLive", "1.3.6.1.4.1.1206.3.3.1.1.1.1.8.{phase}")
+OID_VEH_CALL_TEMPLATE = _oid("vehicleCallLive", "1.3.6.1.4.1.1206.3.3.1.1.3.1.2.2.{phase}")
+OID_PED_CALL_TEMPLATE = _oid("pedCallLive", "1.3.6.1.4.1.1206.3.3.1.1.3.1.3.2.{phase}")
+OID_TIME_REMAINING_TEMPLATE = _oid("timerLive", "1.3.6.1.4.1.1206.3.3.1.1.3.1.5.2.{phase}")
+OID_PHASE_MAX_GREEN_1_TEMPLATE = _oid("phaseMaximum1", "1.3.6.1.4.1.1206.4.2.1.1.2.1.6.{phase}")
+OID_RING_STATUS_TEMPLATE = _oid("ringStatus", "1.3.6.1.4.1.1206.4.2.1.7.6.1.1.{ring}")
+OID_PHASE_GREENS_GROUP_TEMPLATE = _oid("phaseStatusGroupGreens", "1.3.6.1.4.1.1206.4.2.1.1.4.1.4.{group}")
+OID_PHASE_REDS_GROUP_TEMPLATE = _oid("phaseStatusGroupReds", "1.3.6.1.4.1.1206.4.2.1.1.4.1.2.{group}")
+OID_PHASE_VEH_CALL_GROUP_TEMPLATE = _oid("phaseStatusGroupVehCalls", "1.3.6.1.4.1.1206.4.2.1.1.4.1.8.{group}")
+OID_PHASE_PED_CALL_GROUP_TEMPLATE = _oid("phaseStatusGroupPedCalls", "1.3.6.1.4.1.1206.4.2.1.1.4.1.9.{group}")
 
 # Reference templates from docs (used only if walk-confirmed templates fail).
 OID_PHASE_STATUS_TEMPLATE_REF = _oid("phaseStatusGroup", "1.3.6.1.4.1.1206.3.3.1.1.1.1.1.{phase}")
@@ -135,6 +141,77 @@ class SiemensM60(Device):
             return "unknown"
         return mapping.get(code, f"code {code}")
 
+    @staticmethod
+    def _decode_ring_status(code: int | None) -> dict[str, Any]:
+        """Decode NTCIP ringStatus bitfield into timer state and event flags."""
+        if code is None:
+            return {
+                "raw": None,
+                "state_code": None,
+                "state_name": "Unavailable",
+                "bit_a": None,
+                "bit_b": None,
+                "bit_c": None,
+                "gap_out": False,
+                "max_out": False,
+                "force_off": False,
+            }
+
+        state_lookup = {
+            0: "Min Green",
+            1: "Extension",
+            2: "Maximum",
+            3: "Green Rest",
+            4: "Yellow Change",
+            5: "Red Clearance",
+            6: "Red Rest",
+            7: "Undefined",
+        }
+        state_code = code & 0b111
+        return {
+            "raw": code,
+            "state_code": state_code,
+            "state_name": state_lookup.get(state_code, "Unknown"),
+            "bit_a": bool(code & 0b0001),
+            "bit_b": bool(code & 0b0010),
+            "bit_c": bool(code & 0b0100),
+            "gap_out": bool(code & 0b1000),
+            "max_out": bool(code & 0b1_0000),
+            "force_off": bool(code & 0b10_0000),
+        }
+
+    @staticmethod
+    def _decode_phase_group_bits(mask: int | None, group: int) -> set[int]:
+        """Decode NTCIP phase status group bitmask into absolute phase numbers."""
+        if mask is None:
+            return set()
+        base_phase = 1 if group == 1 else 9
+        active: set[int] = set()
+        for bit in range(8):
+            if mask & (1 << bit):
+                active.add(base_phase + bit)
+        return active
+
+    async def _read_group_mask(
+        self,
+        target: UdpTransportTarget,
+        template: str,
+        group: int,
+    ) -> int | None:
+        """Read a grouped NTCIP object with scalar fallback for group 1 devices."""
+        if "{group}" in template:
+            oid = template.format(group=group)
+            value = self._to_int(await self._safe_get_oid(target, oid))
+            if value is not None:
+                return value
+            if group == 1:
+                scalar_oid = template.replace(".{group}", "")
+                return self._to_int(await self._safe_get_oid(target, scalar_oid))
+            return None
+        if group != 1:
+            return None
+        return self._to_int(await self._safe_get_oid(target, template))
+
     async def connect(self) -> bool:
         """Test connectivity via SNMP."""
         try:
@@ -181,6 +258,58 @@ class SiemensM60(Device):
             current_pattern_raw = await self._safe_get_oid(target, OID_CURRENT_PATTERN)
             unit_status_raw = await self._safe_get_oid(target, OID_UNIT_STATUS)
 
+            ring_status: dict[str, dict[str, Any]] = {}
+            ring_state_parts: list[str] = []
+            for ring in (1, 2):
+                ring_oid = (
+                    OID_RING_STATUS_TEMPLATE.format(ring=ring)
+                    if "{ring}" in OID_RING_STATUS_TEMPLATE
+                    else OID_RING_STATUS_TEMPLATE
+                )
+                ring_raw = self._to_int(await self._safe_get_oid(target, ring_oid))
+                decoded = self._decode_ring_status(ring_raw)
+                ring_status[str(ring)] = decoded
+                ring_state_parts.append(f"R{ring}:{decoded['state_name']}")
+
+            ntcip_greens: set[int] = set()
+            ntcip_reds: set[int] = set()
+            ntcip_veh_calls: set[int] = set()
+            ntcip_ped_calls: set[int] = set()
+            has_ntcip_greens = False
+            has_ntcip_reds = False
+            has_ntcip_veh_calls = False
+            has_ntcip_ped_calls = False
+            ntcip_masks: dict[str, dict[str, int | None]] = {
+                "greens": {},
+                "reds": {},
+                "veh_calls": {},
+                "ped_calls": {},
+            }
+
+            for group in (1, 2):
+                green_mask = await self._read_group_mask(target, OID_PHASE_GREENS_GROUP_TEMPLATE, group)
+                red_mask = await self._read_group_mask(target, OID_PHASE_REDS_GROUP_TEMPLATE, group)
+                veh_mask = await self._read_group_mask(target, OID_PHASE_VEH_CALL_GROUP_TEMPLATE, group)
+                ped_mask = await self._read_group_mask(target, OID_PHASE_PED_CALL_GROUP_TEMPLATE, group)
+
+                ntcip_masks["greens"][str(group)] = green_mask
+                ntcip_masks["reds"][str(group)] = red_mask
+                ntcip_masks["veh_calls"][str(group)] = veh_mask
+                ntcip_masks["ped_calls"][str(group)] = ped_mask
+
+                if green_mask is not None:
+                    has_ntcip_greens = True
+                    ntcip_greens |= self._decode_phase_group_bits(green_mask, group)
+                if red_mask is not None:
+                    has_ntcip_reds = True
+                    ntcip_reds |= self._decode_phase_group_bits(red_mask, group)
+                if veh_mask is not None:
+                    has_ntcip_veh_calls = True
+                    ntcip_veh_calls |= self._decode_phase_group_bits(veh_mask, group)
+                if ped_mask is not None:
+                    has_ntcip_ped_calls = True
+                    ntcip_ped_calls |= self._decode_phase_group_bits(ped_mask, group)
+
             phases: dict[str, dict[str, Any]] = {}
             raw_phase_status: dict[str, int] = {}
             active_vehicle_calls: list[int] = []
@@ -189,12 +318,14 @@ class SiemensM60(Device):
             yellow_phases: list[int] = []
             red_phases: list[int] = []
             time_remaining: dict[str, int] = {}
+            phase_max_green_1: dict[str, int] = {}
 
             for phase in range(1, 17):
                 status_oid = OID_PHASE_STATUS_TEMPLATE.format(phase=phase)
                 veh_call_oid = OID_VEH_CALL_TEMPLATE.format(phase=phase)
                 ped_call_oid = OID_PED_CALL_TEMPLATE.format(phase=phase)
                 timer_oid = OID_TIME_REMAINING_TEMPLATE.format(phase=phase)
+                max_green_1_oid = OID_PHASE_MAX_GREEN_1_TEMPLATE.format(phase=phase)
 
                 status_val = self._to_int(await self._safe_get_oid(target, status_oid))
                 if status_val is None:
@@ -216,16 +347,28 @@ class SiemensM60(Device):
                     timer_oid = OID_TIME_REMAINING_TEMPLATE_REF.format(phase=phase)
                     timer_val = self._to_int(await self._safe_get_oid(target, timer_oid))
 
+                max_green_1_val = self._to_int(await self._safe_get_oid(target, max_green_1_oid))
+
                 status_val = status_val or 0
                 veh_call_val = veh_call_val or 0
                 ped_call_val = ped_call_val or 0
                 timer_val = timer_val or 0
+                max_green_1_val = max_green_1_val or 0
 
                 is_green = bool(status_val & 0b0001)
                 is_yellow = bool(status_val & 0b0010)
                 is_red = bool(status_val & 0b0100)
                 has_veh_call = veh_call_val != 0
                 has_ped_call = ped_call_val != 0
+
+                if has_ntcip_greens:
+                    is_green = phase in ntcip_greens
+                if has_ntcip_reds:
+                    is_red = phase in ntcip_reds
+                if has_ntcip_veh_calls:
+                    has_veh_call = phase in ntcip_veh_calls
+                if has_ntcip_ped_calls:
+                    has_ped_call = phase in ntcip_ped_calls
 
                 if is_green:
                     green_phases.append(phase)
@@ -241,6 +384,7 @@ class SiemensM60(Device):
                 phase_key = str(phase)
                 raw_phase_status[phase_key] = status_val
                 time_remaining[phase_key] = timer_val
+                phase_max_green_1[phase_key] = max_green_1_val
                 phases[phase_key] = {
                     "green": is_green,
                     "yellow": is_yellow,
@@ -248,6 +392,7 @@ class SiemensM60(Device):
                     "vehicle_call": has_veh_call,
                     "ped_call": has_ped_call,
                     "time_remaining": timer_val,
+                    "max_green_1": max_green_1_val,
                     "raw_status": status_val,
                 }
 
@@ -266,7 +411,11 @@ class SiemensM60(Device):
                 "unit_status": unit_status_code or 0,
                 "phases": phases,
                 "timers": time_remaining,
+                "phase_max_green_1": phase_max_green_1,
                 "phase_summary": phase_summary,
+                "ring_status": ring_status,
+                "ring_status_summary": ", ".join(ring_state_parts) if ring_state_parts else "none",
+                "ntcip_phase_group_masks": ntcip_masks,
             }
 
             self.status.raw_data = {
@@ -281,6 +430,10 @@ class SiemensM60(Device):
                 "vehicle_calls": ", ".join(str(p) for p in active_vehicle_calls) if active_vehicle_calls else "none",
                 "ped_calls": ", ".join(str(p) for p in active_ped_calls) if active_ped_calls else "none",
                 "time_remaining": time_remaining,
+                "phase_max_green_1": phase_max_green_1,
+                "ring_status": ring_status,
+                "ring_status_summary": ", ".join(ring_state_parts) if ring_state_parts else "none",
+                "ntcip_phase_group_masks": ntcip_masks,
             }
 
             if current_pattern is None and unit_status_code is None and sys_descr is None:
