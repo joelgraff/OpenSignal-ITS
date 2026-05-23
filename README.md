@@ -15,7 +15,7 @@ Then run:
 
 ```bash
 source .venv/bin/activate
-uv run reflex run
+.venv/bin/reflex run
 ```
 
 Open `http://localhost:3000`.

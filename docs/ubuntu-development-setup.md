@@ -20,7 +20,7 @@ Then start the app:
 
 ```bash
 source .venv/bin/activate
-uv run reflex run
+.venv/bin/reflex run
 ```
 
 Open the app at `http://localhost:3000`.
@@ -58,22 +58,24 @@ export PATH="$HOME/.local/bin:$PATH"
 3. Create/sync environment:
 
 ```bash
-uv sync
+uv venv .venv --python 3.12 --clear
+UV_PROJECT_ENVIRONMENT=.venv uv sync
 source .venv/bin/activate
 ```
 
 4. Run the app:
 
 ```bash
-uv run reflex run
+.venv/bin/reflex run
 ```
 
 ## Verify your environment
 
 ```bash
 uv --version
-uv run python --version
-uv run python -c "import reflex, pysnmp; print(reflex.__version__)"
+.venv/bin/python --version
+.venv/bin/python -c "import importlib.metadata; import pysnmp, reflex; print(importlib.metadata.version('reflex'))"
+test -x .venv/bin/reflex && echo "reflex cli found"
 ```
 
 ## Troubleshooting
@@ -93,7 +95,8 @@ If the project root directory was renamed, recreate the virtual environment:
 
 ```bash
 rm -rf .venv
-uv sync
+uv venv .venv --python 3.12 --clear
+UV_PROJECT_ENVIRONMENT=.venv uv sync
 ```
 
 ### Port already in use
