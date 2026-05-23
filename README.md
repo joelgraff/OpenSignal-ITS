@@ -24,3 +24,4 @@ For full instructions and troubleshooting, see:
 
 - [docs/ubuntu-development-setup.md](docs/ubuntu-development-setup.md)
 - [docs/operations-runbook.md](docs/operations-runbook.md)
+- [docs/sprint1-device-registry-plan.md](docs/sprint1-device-registry-plan.md)

@@ -18,6 +18,9 @@ OpenSignal ITS is a Python-first traffic controller management platform built wi
 - SNMP command wiring exists (SET path implemented), but OIDs are provisional and must be validated against Siemens/NTCIP docs before production use.
 - Operational command safety is implemented with operator authentication, write unlock windows, and per-command confirmation tokens.
 - Command/snapshot persistence is implemented in SQLite with correlation IDs and startup retention enforcement.
+- Device plugin base is now production-oriented (auto-registration, factory creation, plugin metadata, background polling hooks).
+- Current bottleneck: state layer remains large and carries Siemens-specific parsing plus orchestration/UI coupling.
+- Device registry is implemented but not yet leveraged by state/services for dynamic multi-device operation.
 
 ## Operational Rules
 - Use allowlisted command names and documented OIDs only.
@@ -28,11 +31,12 @@ OpenSignal ITS is a Python-first traffic controller management platform built wi
 - Maintain and follow docs/operations-runbook.md for operational procedures and environment requirements.
 
 ## Immediate Development Focus
-1. Stabilize state updates and dashboard telemetry.
-2. Migrate state orchestration to opensignal_its/states/traffic_state.py.
-3. Add shared SNMP protocol helper module.
-4. Add command history + status snapshot persistence in opensignal_its/db/.
-5. Add baseline tests for connect/poll/command flows.
+1. Slim state by moving Siemens-specific parsing/formatting out of TrafficState.
+2. Make PollingService/CommandService use Device.create(...) and registry lookup.
+3. Introduce normalized device-status adapters so UI consumes one shape for any driver.
+4. Add multi-device state model (device list + selected device + aggregate health).
+5. Shift polling ownership to device instances and have state aggregate updates.
+6. Add service-level tests for registry-driven polling/command dispatch and multi-device state transitions.
 
 ## Agent Handoff
 - Planning/research agent updates AGENT_CONTEXT.json.

@@ -4,19 +4,22 @@ from typing import Any
 
 from ..devices.siemens_m60 import SiemensM60
 from ..models.device import DeviceConfig
+from .device_runtime_service import RUNTIME
 
 
 class CommandService:
     """Execute controller commands and return updated state payloads."""
 
     @staticmethod
-    async def execute_siemens_m60_command(
+    async def execute_command(
+        device_type: str,
         config: DeviceConfig,
         cmd_type: str,
         value: Any,
         safe_command_probe: bool,
+        device_id: str = "",
     ) -> tuple[bool, dict, int, str]:
-        device = SiemensM60(config)
+        _runtime_key, device = RUNTIME.get_or_create(device_type, config, device_id=device_id)
         if not await device.connect():
             payload = device.status.model_dump(mode="json")
             return False, payload, getattr(device, "_mp_model", 1), "Controller connection failed before command"
@@ -55,3 +58,19 @@ class CommandService:
                 error = f"Command failed: {cmd_type}"
 
         return success, payload, getattr(device, "_mp_model", 1), error
+
+    @staticmethod
+    async def execute_siemens_m60_command(
+        config: DeviceConfig,
+        cmd_type: str,
+        value: Any,
+        safe_command_probe: bool,
+    ) -> tuple[bool, dict, int, str]:
+        # Compatibility wrapper for existing state call sites.
+        return await CommandService.execute_command(
+            device_type=SiemensM60.device_type,
+            config=config,
+            cmd_type=cmd_type,
+            value=value,
+            safe_command_probe=safe_command_probe,
+        )

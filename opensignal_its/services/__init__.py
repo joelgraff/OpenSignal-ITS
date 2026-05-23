@@ -2,6 +2,9 @@
 
 from .auth_service import OperatorAuthService
 from .command_service import CommandService
+from .device_runtime_service import DeviceRuntimeService, RUNTIME
+from .event_service import EventService
+from .fleet_service import FleetService
 from .maintenance_service import MaintenanceService
 from .maintenance_scheduler import scheduler_status, start_retention_scheduler, stop_retention_scheduler
 from .preflight_service import bootstrap_runtime_safety, validate_runtime_configuration
@@ -11,6 +14,10 @@ from .safety_service import CommandSafetyService, SafetyDecision
 __all__ = [
 	"OperatorAuthService",
 	"CommandService",
+	"DeviceRuntimeService",
+	"RUNTIME",
+	"EventService",
+	"FleetService",
 	"MaintenanceService",
 	"scheduler_status",
 	"start_retention_scheduler",

@@ -32,6 +32,8 @@ Production-like modes are defined as `OPENSIGNAL_ENV` in: `prod`, `production`, 
 - `OPENSIGNAL_LOGIN_LOCKOUT_SECONDS`: Defaults to `300`.
 - `OPENSIGNAL_ENABLE_RETENTION_SCHEDULER`: Defaults to `false`.
 - `OPENSIGNAL_RETENTION_SCHEDULE_SECONDS`: Defaults to `3600` (minimum `300`).
+- `OPENSIGNAL_ALARM_OFFLINE_SNAPSHOT_STREAK`: Defaults to `3`.
+- `OPENSIGNAL_ALARM_COMMAND_FAILURE_STREAK`: Defaults to `3`.
 
 ### Secret and credential options
 
@@ -87,6 +89,24 @@ Use the dashboard maintenance panel to validate runtime retention state:
 2. Confirm scheduler enabled/running state and configured interval.
 3. Verify the latest retention cleanup timestamp and outcome message.
 4. Use **Export Audit Report** to write recent command/snapshot activity plus runtime metadata to disk.
+
+### Managed Polling Runtime Controls
+
+Use fleet controls to manage long-lived runtime device polling tasks:
+
+1. Select a target device profile (`selected_device_id`).
+2. Set managed polling interval seconds.
+3. Start or stop managed polling for the selected device.
+4. Refresh runtime registry to verify active runtime keys and running polling tasks.
+5. Use fleet-wide controls to start/stop polling across all configured profiles (admin-authenticated sessions only).
+
+### Event Timeline and Alarms
+
+The dashboard can compute event timeline and alarms from persisted command/snapshot activity:
+
+1. Use **Refresh Events** to rebuild timeline rows from recent command and snapshot history.
+2. Offline streak alarm triggers when a device has N consecutive offline snapshots.
+3. Command failure streak alarm triggers when a device has N consecutive failed commands.
 
 ## Operator Workflow (Write Commands)
 

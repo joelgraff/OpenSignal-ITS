@@ -1,14 +1,18 @@
 # device.py - Common device models and utilities for OpenSignal ITS
 
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class DeviceStatus(BaseModel):
     """Standardized status for any device."""
     device_id: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=_utc_now)
     is_online: bool = False
     status_text: str = "Unknown"
     raw_data: Dict[str, Any] = Field(default_factory=dict)

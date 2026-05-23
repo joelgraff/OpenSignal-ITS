@@ -8,11 +8,14 @@ from uuid import uuid4
 
 import reflex as rx
 
+from ..devices.parsers import build_siemens_m60_view
 from ..db import CommandAuditRecord, STORE
 from ..models.device import DeviceConfig
 from ..services import (
     CommandSafetyService,
     CommandService,
+    EventService,
+    FleetService,
     MaintenanceService,
     OperatorAuthService,
     PollingService,
@@ -58,6 +61,21 @@ class TrafficState(rx.State):
     snmp_version: str = "auto"
     timeout_text: str = "3"
     retries_text: str = "1"
+    device_profiles_json: str = "[]"
+    selected_device_id: str = ""
+    fleet_status_summary: str = "Fleet view idle."
+    fleet_device_rows: list[str] = []
+    fleet_status_by_id: dict[str, dict[str, Any]] = {}
+    fleet_online_count: int = 0
+    fleet_offline_count: int = 0
+    fleet_total_count: int = 0
+    managed_polling_interval_text: str = "5"
+    managed_polling_notice: str = "Managed polling idle."
+    runtime_registry_summary: str = "Runtime registry idle."
+    runtime_registry_rows: list[str] = []
+    event_notice: str = "Event timeline idle."
+    event_timeline_rows: list[str] = []
+    alarm_rows: list[str] = []
     login_username_input: str = ""
     login_password_input: str = ""
     is_authenticated: bool = False
@@ -108,11 +126,20 @@ class TrafficState(rx.State):
     def update_snmp_version(self, value: str):
         self.snmp_version = value
 
+    def update_device_profiles_json(self, value: str):
+        self.device_profiles_json = value
+
+    def update_selected_device_id(self, value: str):
+        self.selected_device_id = value
+
     def update_timeout_text(self, value: str):
         self.timeout_text = value
 
     def update_retries_text(self, value: str):
         self.retries_text = value
+
+    def update_managed_polling_interval_text(self, value: str):
+        self.managed_polling_interval_text = value
 
     def update_safe_command_probe(self, value: bool):
         self.safe_command_probe = value
@@ -168,6 +195,12 @@ class TrafficState(rx.State):
             return max(15, int(self.write_unlock_seconds_text))
         except ValueError:
             return 120
+
+    def _managed_polling_interval_seconds(self) -> int:
+        try:
+            return max(1, int(self.managed_polling_interval_text))
+        except ValueError:
+            return 5
 
     @staticmethod
     def _max_login_attempts() -> int:
@@ -247,6 +280,57 @@ class TrafficState(rx.State):
             retries=retries,
         )
 
+    def _fleet_profiles(self) -> list[dict[str, Any]]:
+        return FleetService.parse_profiles_json(self.device_profiles_json)
+
+    def _selected_device_target(self) -> tuple[str, str, DeviceConfig]:
+        profiles = self._fleet_profiles()
+        selected = FleetService.select_profile(profiles, self.selected_device_id)
+        if selected is None:
+            config = self._build_config()
+            return "siemens_m60", self.ip_address.strip() or "single-device", config
+
+        config = FleetService.build_device_config(selected)
+        return (
+            str(selected.get("device_type", FleetService.DEFAULT_DEVICE_TYPE)),
+            str(selected.get("device_id", config.name)),
+            config,
+        )
+
+    def _refresh_fleet_aggregate_fields(self):
+        summary = FleetService.summarize_status_map(self.fleet_status_by_id)
+        self.fleet_total_count = int(summary["total"])
+        self.fleet_online_count = int(summary["online"])
+        self.fleet_offline_count = int(summary["offline"])
+        if self.fleet_total_count > 0:
+            self.fleet_status_summary = (
+                f"Fleet devices: {self.fleet_total_count} total, "
+                f"{self.fleet_online_count} online, {self.fleet_offline_count} offline."
+            )
+
+    def _cache_device_status(self, device_id: str, device_type: str, payload: dict[str, Any]):
+        cache = dict(self.fleet_status_by_id)
+        cache[device_id] = {
+            "device_type": device_type,
+            "is_online": bool(payload.get("is_online", False)),
+            "status_text": str(payload.get("status_text", "unknown")),
+            "timestamp": str(payload.get("timestamp", "")),
+        }
+        self.fleet_status_by_id = cache
+
+        rows = list(self.fleet_device_rows)
+        row = FleetService.format_status_row(device_id, device_type, payload)
+        replaced = False
+        for i, existing in enumerate(rows):
+            if existing.startswith(f"{device_id} [{device_type}]"):
+                rows[i] = row
+                replaced = True
+                break
+        if not replaced:
+            rows.append(row)
+        self.fleet_device_rows = rows
+        self._refresh_fleet_aggregate_fields()
+
     def _parse_timestamp(self, ts: str) -> datetime | None:
         if not ts:
             return None
@@ -264,271 +348,47 @@ class TrafficState(rx.State):
         return max(0, delta)
 
     def _apply_phase_payload(self, payload: dict, poll_delta_seconds: int = 0):
-        raw_data = payload.get("raw_data", {}) if isinstance(payload, dict) else {}
-        extra = payload.get("extra", {}) if isinstance(payload, dict) else {}
+        parsed = build_siemens_m60_view(
+            payload=payload,
+            poll_delta_seconds=poll_delta_seconds,
+            previous_phase_state_age=self.phase_state_age_seconds,
+            previous_phase_signatures=self.last_phase_state_signature,
+            previous_ring_raw=self.last_ring_status_raw,
+            previous_ring_age=self.ring_state_age_seconds,
+            previous_timer_snapshot=self.last_timer_snapshot,
+        )
 
-        self.current_pattern = str(raw_data.get("current_pattern", "Unknown"))
-        self.unit_status = str(raw_data.get("unit_status", "unknown"))
-
-        summary = extra.get("phase_summary", {}) if isinstance(extra, dict) else {}
-        greens = summary.get("green", []) if isinstance(summary, dict) else []
-        yellows = summary.get("yellow", []) if isinstance(summary, dict) else []
-        reds = summary.get("red", []) if isinstance(summary, dict) else []
-        veh_calls = summary.get("vehicle_calls", []) if isinstance(summary, dict) else []
-        ped_calls = summary.get("ped_calls", []) if isinstance(summary, dict) else []
-
-        self.green_phases = ", ".join(str(v) for v in greens) if greens else "none"
-        self.yellow_phases = ", ".join(str(v) for v in yellows) if yellows else "none"
-        self.red_phases = ", ".join(str(v) for v in reds) if reds else "none"
-        self.vehicle_calls = ", ".join(str(v) for v in veh_calls) if veh_calls else "none"
-        self.ped_calls = ", ".join(str(v) for v in ped_calls) if ped_calls else "none"
-
-        phases = extra.get("phases", {}) if isinstance(extra, dict) else {}
-        lines: list[str] = []
-        timer_parts: list[str] = []
-        estimated_countdown_parts: list[str] = []
-        timer_snapshot: dict[str, int] = {}
-        next_phase_state_age: dict[str, int] = dict(self.phase_state_age_seconds)
-        next_phase_signatures: dict[str, str] = dict(self.last_phase_state_signature)
-        phase_data: dict[str, dict[str, bool | int]] = {}
-        self.phase_current_pattern = self.current_pattern
-        self.phase_unit_control_status = self.unit_status
-        if isinstance(phases, dict):
-            for phase in range(1, 17):
-                phase_key = str(phase)
-                entry = phases.get(phase_key, {})
-                if not isinstance(entry, dict):
-                    entry = {}
-                flags = []
-                if entry.get("green"):
-                    flags.append("G")
-                if entry.get("yellow"):
-                    flags.append("Y")
-                if entry.get("red"):
-                    flags.append("R")
-                state = "/".join(flags) if flags else "OFF"
-                v_call = "Y" if entry.get("vehicle_call") else "N"
-                p_call = "Y" if entry.get("ped_call") else "N"
-                timer = int(entry.get("time_remaining", 0) or 0)
-                max_green_1 = int(entry.get("max_green_1", 0) or 0)
-
-                signature = f"G{1 if entry.get('green') else 0}Y{1 if entry.get('yellow') else 0}R{1 if entry.get('red') else 0}"
-                previous_signature = self.last_phase_state_signature.get(phase_key, "")
-                if signature == previous_signature and poll_delta_seconds > 0:
-                    next_phase_state_age[phase_key] = next_phase_state_age.get(phase_key, 0) + poll_delta_seconds
-                else:
-                    next_phase_state_age[phase_key] = 0
-                next_phase_signatures[phase_key] = signature
-                state_age = next_phase_state_age.get(phase_key, 0)
-
-                estimated_countdown = -1
-                if bool(entry.get("green")) and max_green_1 > 0:
-                    estimated_countdown = max(0, max_green_1 - state_age)
-
-                timer_snapshot[phase_key] = timer
-                if estimated_countdown >= 0:
-                    lines.append(
-                        f"P{phase:02d} {state:6s} V:{v_call} P:{p_call} T:{timer:>3d}s Est:{estimated_countdown:>3d}s Max1:{max_green_1:>3d}s"
-                    )
-                    estimated_countdown_parts.append(f"P{phase}:{estimated_countdown}")
-                else:
-                    lines.append(f"P{phase:02d} {state:6s} V:{v_call} P:{p_call} T:{timer:>3d}s")
-                phase_data[f"Phase_{phase}"] = {
-                    "green": bool(entry.get("green")),
-                    "yellow": bool(entry.get("yellow")),
-                    "red": bool(entry.get("red")),
-                    "has_call": bool(entry.get("vehicle_call") or entry.get("ped_call")),
-                    "vehicle_call": bool(entry.get("vehicle_call")),
-                    "ped_call": bool(entry.get("ped_call")),
-                    "time_remaining": timer,
-                }
-                if timer > 0:
-                    timer_parts.append(f"P{phase}:{timer}")
-        self.phase_detail_lines = lines
-        self.phase_data = phase_data
-        self.phase_state_age_seconds = next_phase_state_age
-        self.last_phase_state_signature = next_phase_signatures
-
-        def _phase_char(phase: int, mode: str) -> str:
-            entry = phase_data.get(f"Phase_{phase}", {})
-            if not isinstance(entry, dict):
-                entry = {}
-            is_green = bool(entry.get("green", False))
-            is_yellow = bool(entry.get("yellow", False))
-            has_veh = bool(entry.get("vehicle_call", False))
-            has_ped = bool(entry.get("ped_call", False))
-            if mode == "on":
-                # Manual O/N row: O is live active; next-phase (N) is not exposed by current OIDs.
-                return "O" if (is_green or is_yellow) else "."
-            if mode == "veh":
-                return "C" if has_veh else "."
-            if mode == "ped":
-                return "C" if has_ped else "."
-            return "."
-
-        def _phase_cells(mode: str) -> tuple[str, str]:
-            left = "".join(_phase_char(p, mode) for p in range(1, 9))
-            right = "".join(_phase_char(p, mode) for p in range(9, 17))
-            return left, right
-
-        def _ring_state_abbrev(state_name: str) -> str:
-            mapping = {
-                "Min Green": "MGRN",
-                "Extension": "PASS",
-                "Maximum": "MAX1",
-                "Green Rest": "GRN RST",
-                "Yellow Change": "YEL",
-                "Red Clearance": "RED",
-                "Red Rest": "RED RST",
-            }
-            return mapping.get(state_name, state_name.upper())
-
-        def _active_ring_timer(start_phase: int, end_phase: int) -> int:
-            # Use live per-phase timer from the first active interval in the ring bank.
-            for p in range(start_phase, end_phase + 1):
-                entry = phase_data.get(f"Phase_{p}", {})
-                if not isinstance(entry, dict):
-                    continue
-                if bool(entry.get("green", False)) or bool(entry.get("yellow", False)):
-                    return int(entry.get("time_remaining", 0) or 0)
-            return 0
-
-        if estimated_countdown_parts:
-            self.remaining_time_summary = ", ".join(estimated_countdown_parts)
-            self.timer_mode_text = "estimated countdown (max green)"
-        else:
-            self.remaining_time_summary = ", ".join(timer_parts) if timer_parts else "none"
-            if self.last_timer_snapshot:
-                self.timer_mode_text = "dynamic" if self.last_timer_snapshot != timer_snapshot else "static"
-            else:
-                self.timer_mode_text = "unknown"
-
-        ring_status = extra.get("ring_status", {}) if isinstance(extra, dict) else {}
-        ring_lines: list[str] = []
-        ring_parts: list[str] = []
-        next_ring_raw: dict[str, int] = {}
-        next_ring_age: dict[str, int] = dict(self.ring_state_age_seconds)
-        if isinstance(ring_status, dict):
-            for ring in (1, 2):
-                ring_entry = ring_status.get(str(ring), {})
-                if not isinstance(ring_entry, dict):
-                    ring_entry = {}
-                state_name = str(ring_entry.get("state_name", "Unavailable"))
-                state_code = int(ring_entry.get("state_code", -1) or -1)
-                bit_a = "1" if bool(ring_entry.get("bit_a", False)) else "0"
-                bit_b = "1" if bool(ring_entry.get("bit_b", False)) else "0"
-                bit_c = "1" if bool(ring_entry.get("bit_c", False)) else "0"
-                raw = ring_entry.get("raw")
-                raw_int = int(raw) if isinstance(raw, int) else -1
-                next_ring_raw[str(ring)] = raw_int
-                prev_raw = self.last_ring_status_raw.get(str(ring), -2)
-                if raw_int == prev_raw and poll_delta_seconds > 0:
-                    next_ring_age[str(ring)] = next_ring_age.get(str(ring), 0) + poll_delta_seconds
-                else:
-                    next_ring_age[str(ring)] = 0
-                gap_out = bool(ring_entry.get("gap_out", False))
-                max_out = bool(ring_entry.get("max_out", False))
-                force_off = bool(ring_entry.get("force_off", False))
-                age = next_ring_age.get(str(ring), 0)
-                ring_parts.append(f"R{ring}:{state_name} ({age}s)")
-                ring_lines.append(
-                    f"R{ring}  raw={raw_int:>3d}  code={state_code:>2d}  bits={bit_a}{bit_b}{bit_c}  state={state_name:<14}  age={age:>3d}s  gap={'Y' if gap_out else 'N'} max={'Y' if max_out else 'N'} force={'Y' if force_off else 'N'}"
-                )
-        self.last_ring_status_raw = next_ring_raw
-        self.ring_state_age_seconds = next_ring_age
-        self.ring_status_summary = ", ".join(ring_parts) if ring_parts else "unknown"
-        self.ring_status_lines = ring_lines
-
-        # Approximate ring max timers from first active green phase in each half-bank.
-        ring1_max1 = 0
-        ring2_max1 = 0
-        for p in range(1, 9):
-            entry = phases.get(str(p), {}) if isinstance(phases, dict) else {}
-            if bool(entry.get("green", False)) and ring1_max1 == 0:
-                ring1_max1 = int(entry.get("max_green_1", 0) or 0)
-        for p in range(9, 17):
-            entry = phases.get(str(p), {}) if isinstance(phases, dict) else {}
-            if bool(entry.get("green", False)) and ring2_max1 == 0:
-                ring2_max1 = int(entry.get("max_green_1", 0) or 0)
-
-        r1_age = next_ring_age.get("1", 0)
-        r2_age = next_ring_age.get("2", 0)
-        r1_state = "UNAVAIL"
-        r2_state = "UNAVAIL"
-        if isinstance(ring_status, dict):
-            r1_state = str((ring_status.get("1") or {}).get("state_name", "UNAVAIL"))
-            r2_state = str((ring_status.get("2") or {}).get("state_name", "UNAVAIL"))
-
-        r1 = ring_status.get("1", {}) if isinstance(ring_status, dict) else {}
-        r2 = ring_status.get("2", {}) if isinstance(ring_status, dict) else {}
-        r1_gap = "Y" if bool((r1 or {}).get("gap_out", False)) else "N"
-        r1_max = "Y" if bool((r1 or {}).get("max_out", False)) else "N"
-        r1_force = "Y" if bool((r1 or {}).get("force_off", False)) else "N"
-        r2_gap = "Y" if bool((r2 or {}).get("gap_out", False)) else "N"
-        r2_max = "Y" if bool((r2 or {}).get("max_out", False)) else "N"
-        r2_force = "Y" if bool((r2 or {}).get("force_off", False)) else "N"
-
-        on_left, on_right = _phase_cells("on")
-        veh_left, veh_right = _phase_cells("veh")
-        ped_left, ped_right = _phase_cells("ped")
-
-        r1_interval = _ring_state_abbrev(r1_state)
-        r2_interval = _ring_state_abbrev(r2_state)
-        r1_timer = _active_ring_timer(1, 8)
-        r2_timer = _active_ring_timer(9, 16)
-
-        def _ring_row(label: str, left: str, right: str) -> str:
-            return f"{label:<8}{left:<14}{right:<14}"
-
-        def _phase_row(label: str, left: str, right: str) -> str:
-            return f"{label:<6}{left:<9}{right:<9}"
-
-        m60_header = [
-            "UP/DOWN TO SCROLL                      E-EDIT [1]",
-            "RING TIMERS SEQ:00 B:1:1:1:1 CHG PENDING",
-            "RING 1           RING 2",
-            _ring_row("STATE", f"{r1_interval} {r1_timer:>2}", f"{r2_interval} {r2_timer:>2}"),
-            _ring_row("MAX1", f"{ring1_max1:>2}", f"{ring2_max1:>2}"),
-            _ring_row("GAP OUT", r1_gap, r2_gap),
-            _ring_row("MAX OUT", r1_max, r2_max),
-            _ring_row("FORCE", r1_force, r2_force),
-            _ring_row("AGE", f"{r1_age:>3}s", f"{r2_age:>3}s"),
-            "",
-            "PHS..12345678 90123456",
-            _phase_row("O/N", on_left, on_right),
-            _phase_row("VEH", veh_left, veh_right),
-            _phase_row("PED", ped_left, ped_right),
-            "",
-            "Legend: O=On C=Call .=Inactive",
-            "A-UP  B-DN  C-LT  D-RT  E-ENTER  F-PRIOR MENU",
-            "",
-            "RING DETAIL",
-        ]
-
-        if ring_lines:
-            code_legend = [
-                "0=Min Green  1=Extension  2=Maximum  3=Green Rest",
-                "4=Yellow Chg 5=Red Clear  6=Red Rest 7=Undefined",
-            ]
-            self.ring_status_console_text = "\n".join([
-                *m60_header,
-                "Ring raw code bits state            age gap max force",
-                *ring_lines,
-                "",
-                *code_legend,
-            ])
-        else:
-            self.ring_status_console_text = "\n".join([
-                *m60_header,
-                "(no data)",
-            ])
-
-        self.last_timer_snapshot = timer_snapshot
+        self.current_pattern = str(parsed["current_pattern"])
+        self.unit_status = str(parsed["unit_status"])
+        self.green_phases = str(parsed["green_phases"])
+        self.yellow_phases = str(parsed["yellow_phases"])
+        self.red_phases = str(parsed["red_phases"])
+        self.vehicle_calls = str(parsed["vehicle_calls"])
+        self.ped_calls = str(parsed["ped_calls"])
+        self.phase_data = dict(parsed["phase_data"])
+        self.phase_current_pattern = str(parsed["phase_current_pattern"])
+        self.phase_unit_control_status = str(parsed["phase_unit_control_status"])
+        self.phase_detail_lines = list(parsed["phase_detail_lines"])
+        self.phase_state_age_seconds = dict(parsed["phase_state_age_seconds"])
+        self.last_phase_state_signature = dict(parsed["last_phase_state_signature"])
+        self.remaining_time_summary = str(parsed["remaining_time_summary"])
+        self.timer_mode_text = str(parsed["timer_mode_text"])
+        self.last_timer_snapshot = dict(parsed["last_timer_snapshot"])
+        self.last_ring_status_raw = dict(parsed["last_ring_status_raw"])
+        self.ring_state_age_seconds = dict(parsed["ring_state_age_seconds"])
+        self.ring_status_summary = str(parsed["ring_status_summary"])
+        self.ring_status_lines = list(parsed["ring_status_lines"])
+        self.ring_status_console_text = str(parsed["ring_status_console_text"])
 
     async def _collect_status_snapshot(self) -> tuple[dict, int]:
         """Fetch one controller status snapshot without mutating UI state."""
-        config = self._build_config()
-        return await PollingService.collect_siemens_m60_snapshot(config)
+        device_type, device_id, config = self._selected_device_target()
+        return await PollingService.collect_snapshot(device_type, config, device_id=device_id)
+
+    async def _collect_selected_status_snapshot(self) -> tuple[str, str, dict, int]:
+        device_type, device_id, config = self._selected_device_target()
+        payload, mp_model = await PollingService.collect_snapshot(device_type, config, device_id=device_id)
+        return device_id, device_type, payload, mp_model
 
     def _apply_status_snapshot(self, status_payload: dict, mp_model: int):
         """Apply one status snapshot to state fields used by the UI."""
@@ -789,6 +649,200 @@ class TrafficState(rx.State):
     async def refresh_status(self):
         await self.add_and_poll_m60()
 
+    async def refresh_fleet_status(self):
+        try:
+            profiles = self._fleet_profiles()
+        except Exception as exc:
+            self.fleet_status_summary = f"Fleet profile parse failed: {exc}"
+            self.fleet_device_rows = []
+            self.error = self.fleet_status_summary
+            return
+
+        if not profiles:
+            self.fleet_status_summary = "Fleet profile list is empty; using single-device compatibility mode."
+            self.fleet_device_rows = []
+            return
+
+        selected = FleetService.select_profile(profiles, self.selected_device_id)
+        if selected is not None:
+            self.selected_device_id = str(selected.get("device_id", ""))
+
+        rows: list[str] = []
+        status_by_id: dict[str, dict[str, Any]] = {}
+        selected_payload: dict | None = None
+        selected_mp_model = 1
+        selected_device_type = FleetService.DEFAULT_DEVICE_TYPE
+
+        for profile in profiles:
+            device_id = str(profile.get("device_id", "unknown"))
+            device_type = str(profile.get("device_type", FleetService.DEFAULT_DEVICE_TYPE))
+            config = FleetService.build_device_config(profile)
+            try:
+                payload, mp_model = await PollingService.collect_snapshot(
+                    device_type,
+                    config,
+                    device_id=device_id,
+                )
+                status_by_id[device_id] = {
+                    "device_type": device_type,
+                    "is_online": bool(payload.get("is_online", False)),
+                    "status_text": str(payload.get("status_text", "unknown")),
+                    "timestamp": str(payload.get("timestamp", "")),
+                }
+                rows.append(FleetService.format_status_row(device_id, device_type, payload))
+
+                if device_id == self.selected_device_id:
+                    selected_payload = payload
+                    selected_mp_model = mp_model
+                    selected_device_type = device_type
+            except Exception as exc:
+                rows.append(f"{device_id} [{device_type}] ERROR - {exc}")
+                status_by_id[device_id] = {
+                    "device_type": device_type,
+                    "is_online": False,
+                    "status_text": f"error: {exc}",
+                    "timestamp": "",
+                }
+
+        self.fleet_status_by_id = status_by_id
+        self.fleet_device_rows = rows
+        self._refresh_fleet_aggregate_fields()
+        self.refresh_runtime_registry_status()
+
+        if selected_payload is not None:
+            self._apply_status_snapshot(selected_payload, selected_mp_model)
+            self._cache_device_status(self.selected_device_id, selected_device_type, selected_payload)
+
+    def refresh_runtime_registry_status(self):
+        status = PollingService.runtime_status()
+        count = int(status.get("count", 0))
+        running = int(status.get("running_count", 0))
+        self.runtime_registry_summary = f"Runtime registry: {count} devices, {running} polling tasks running."
+        rows: list[str] = []
+        for key in status.get("keys", []):
+            key_text = str(key)
+            running_suffix = " (polling)" if key_text in set(str(k) for k in status.get("running_keys", [])) else ""
+            rows.append(f"{key_text}{running_suffix}")
+        self.runtime_registry_rows = rows
+
+    def refresh_events_and_alarms(self):
+        try:
+            payload = EventService.build_timeline_and_alarms(command_limit=200, snapshot_limit=200)
+            self.event_timeline_rows = list(payload.get("timeline", []))
+            self.alarm_rows = list(payload.get("alarms", []))
+            self.event_notice = (
+                f"Event timeline refreshed: {len(self.event_timeline_rows)} entries, "
+                f"{len(self.alarm_rows)} active alarms."
+            )
+            self.error = ""
+        except Exception as exc:
+            self.event_notice = f"Event refresh failed: {exc}"
+            self.error = self.event_notice
+
+    async def start_selected_managed_polling(self):
+        device_type, device_id, config = self._selected_device_target()
+        ok, message = await PollingService.start_managed_polling(
+            device_type=device_type,
+            config=config,
+            device_id=device_id,
+            interval_seconds=self._managed_polling_interval_seconds(),
+        )
+        self.managed_polling_notice = message
+        self.error = "" if ok else message
+        self.refresh_runtime_registry_status()
+
+    async def start_fleet_managed_polling(self):
+        if not self._is_role_authorized({"admin"}):
+            self.managed_polling_notice = "Fleet managed polling start denied: admin authentication required."
+            self.error = self.managed_polling_notice
+            return
+
+        try:
+            profiles = self._fleet_profiles()
+        except Exception as exc:
+            self.managed_polling_notice = f"Fleet profile parse failed: {exc}"
+            self.error = self.managed_polling_notice
+            return
+
+        if not profiles:
+            self.managed_polling_notice = "Fleet managed polling start skipped: no configured profiles."
+            self.error = ""
+            return
+
+        started = 0
+        failed = 0
+        for profile in profiles:
+            device_id = str(profile.get("device_id", "unknown"))
+            device_type = str(profile.get("device_type", FleetService.DEFAULT_DEVICE_TYPE))
+            config = FleetService.build_device_config(profile)
+            ok, _ = await PollingService.start_managed_polling(
+                device_type=device_type,
+                config=config,
+                device_id=device_id,
+                interval_seconds=self._managed_polling_interval_seconds(),
+            )
+            if ok:
+                started += 1
+            else:
+                failed += 1
+
+        self.managed_polling_notice = (
+            f"Fleet managed polling start complete: {started} succeeded, {failed} failed."
+        )
+        self.error = "" if failed == 0 else self.managed_polling_notice
+        self.refresh_runtime_registry_status()
+
+    def stop_selected_managed_polling(self):
+        device_type, device_id, config = self._selected_device_target()
+        ok, message = PollingService.stop_managed_polling(
+            device_type=device_type,
+            config=config,
+            device_id=device_id,
+        )
+        self.managed_polling_notice = message
+        self.error = "" if ok else message
+        self.refresh_runtime_registry_status()
+
+    def stop_fleet_managed_polling(self):
+        if not self._is_role_authorized({"admin"}):
+            self.managed_polling_notice = "Fleet managed polling stop denied: admin authentication required."
+            self.error = self.managed_polling_notice
+            return
+
+        try:
+            profiles = self._fleet_profiles()
+        except Exception as exc:
+            self.managed_polling_notice = f"Fleet profile parse failed: {exc}"
+            self.error = self.managed_polling_notice
+            return
+
+        if not profiles:
+            self.managed_polling_notice = "Fleet managed polling stop skipped: no configured profiles."
+            self.error = ""
+            return
+
+        stopped = 0
+        missing = 0
+        for profile in profiles:
+            device_id = str(profile.get("device_id", "unknown"))
+            device_type = str(profile.get("device_type", FleetService.DEFAULT_DEVICE_TYPE))
+            config = FleetService.build_device_config(profile)
+            ok, _ = PollingService.stop_managed_polling(
+                device_type=device_type,
+                config=config,
+                device_id=device_id,
+            )
+            if ok:
+                stopped += 1
+            else:
+                missing += 1
+
+        self.managed_polling_notice = (
+            f"Fleet managed polling stop complete: {stopped} stopped, {missing} not running."
+        )
+        self.error = ""
+        self.refresh_runtime_registry_status()
+
     @rx.event(background=True)
     async def auto_refresh_loop(self):
         """Continuously poll while online and auto-reconnect when offline."""
@@ -817,7 +871,7 @@ class TrafficState(rx.State):
 
                 if is_online and refresh_enabled:
                     try:
-                        status_payload, mp_model = await self._collect_status_snapshot()
+                        device_id, device_type, status_payload, mp_model = await self._collect_selected_status_snapshot()
                     except ValueError:
                         async with self:
                             self.m60_status = {
@@ -837,12 +891,13 @@ class TrafficState(rx.State):
                     else:
                         async with self:
                             self._apply_status_snapshot(status_payload, mp_model)
+                            self._cache_device_status(device_id, device_type, status_payload)
                     await asyncio.sleep(refresh_interval)
                     continue
 
                 if (not is_online) and reconnect_enabled:
                     try:
-                        status_payload, mp_model = await self._collect_status_snapshot()
+                        device_id, device_type, status_payload, mp_model = await self._collect_selected_status_snapshot()
                     except ValueError:
                         async with self:
                             self.m60_status = {
@@ -862,6 +917,7 @@ class TrafficState(rx.State):
                     else:
                         async with self:
                             self._apply_status_snapshot(status_payload, mp_model)
+                            self._cache_device_status(device_id, device_type, status_payload)
                     await asyncio.sleep(reconnect_interval)
                     continue
 
@@ -874,7 +930,7 @@ class TrafficState(rx.State):
         self.is_loading = True
         try:
             try:
-                status_payload, mp_model = await self._collect_status_snapshot()
+                device_id, device_type, status_payload, mp_model = await self._collect_selected_status_snapshot()
             except ValueError:
                 self.m60_status = {
                     "error": "Port, timeout, and retries must be numeric.",
@@ -885,6 +941,7 @@ class TrafficState(rx.State):
                 self.is_online = False
                 return
             self._apply_status_snapshot(status_payload, mp_model)
+            self._cache_device_status(device_id, device_type, status_payload)
         except Exception as e:
             self.m60_status = {"error": f"Unhandled exception: {e}"}
             self.m60_status_json = json.dumps(self.m60_status, indent=2)
@@ -945,12 +1002,14 @@ class TrafficState(rx.State):
                 )
                 return
 
-            config = self._build_config()
-            success, payload, mp_model, error = await CommandService.execute_siemens_m60_command(
+            device_type, device_id, config = self._selected_device_target()
+            success, payload, mp_model, error = await CommandService.execute_command(
+                device_type=device_type,
                 config=config,
                 cmd_type=cmd_type,
                 value=value,
                 safe_command_probe=self.safe_command_probe,
+                device_id=device_id,
             )
             self._safe_log_command(
                 cmd_type=cmd_type,
@@ -975,11 +1034,13 @@ class TrafficState(rx.State):
                     correlation_id=correlation_id,
                     source="command",
                 )
+                self._cache_device_status(device_id, device_type, self.m60_status)
             else:
                 self.m60_status = payload
                 self.m60_status_json = json.dumps(self.m60_status, indent=2)
                 self.error = error
                 self.is_online = bool(self.m60_status.get("is_online", False))
+                self._cache_device_status(device_id, device_type, self.m60_status)
         except Exception as e:
             self.error = str(e)
         finally:
@@ -987,6 +1048,7 @@ class TrafficState(rx.State):
 
     async def connect_and_start_polling(self):
         self.refresh_runtime_health()
+        self.refresh_runtime_registry_status()
         return await self.connect_m60()
 
     async def select_pattern_1(self):

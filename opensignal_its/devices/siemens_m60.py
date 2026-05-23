@@ -78,6 +78,8 @@ OID_PHASE_CONTROL_OMIT = "1.3.6.1.4.1.1206.4.2.1.11.0"
 class SiemensM60(Device):
     """Siemens M60 / SEPAC 5.2.0 SNMPv1 polling + legacy command path."""
 
+    device_type = "siemens_m60"
+
     def __init__(self, config: DeviceConfig):
         super().__init__(config)
         self._snmp = SNMPClient(config)

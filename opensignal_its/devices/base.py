@@ -81,3 +81,4 @@ class Device(ABC):
     def stop_polling(self):
         if self._polling_task:
             self._polling_task.cancel()
+            self._polling_task = None
