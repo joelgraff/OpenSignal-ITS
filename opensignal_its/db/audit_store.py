@@ -158,6 +158,95 @@ class AuditStore:
                     ),
                 )
 
+    def fetch_recent_activity(
+        self,
+        command_limit: int = 100,
+        snapshot_limit: int = 100,
+    ) -> dict[str, list[dict[str, Any]]]:
+        command_limit = max(1, command_limit)
+        snapshot_limit = max(1, snapshot_limit)
+        with self._lock:
+            with self._connect() as conn:
+                conn.row_factory = sqlite3.Row
+                command_rows = conn.execute(
+                    """
+                    SELECT timestamp, correlation_id, device_ip, command_type, command_value_json,
+                           probe_only, allowed, success, error, actor
+                    FROM command_audit
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (command_limit,),
+                ).fetchall()
+                snapshot_rows = conn.execute(
+                    """
+                    SELECT timestamp, correlation_id, source, device_ip, is_online, status_text
+                    FROM status_snapshots
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (snapshot_limit,),
+                ).fetchall()
+
+        commands: list[dict[str, Any]] = []
+        for row in command_rows:
+            command_value = row["command_value_json"]
+            try:
+                parsed_value: Any = json.loads(command_value) if command_value else None
+            except json.JSONDecodeError:
+                parsed_value = command_value
+            commands.append(
+                {
+                    "timestamp": row["timestamp"],
+                    "correlation_id": row["correlation_id"],
+                    "device_ip": row["device_ip"],
+                    "command_type": row["command_type"],
+                    "command_value": parsed_value,
+                    "probe_only": bool(row["probe_only"]),
+                    "allowed": bool(row["allowed"]),
+                    "success": bool(row["success"]),
+                    "error": row["error"],
+                    "actor": row["actor"],
+                }
+            )
+
+        snapshots: list[dict[str, Any]] = []
+        for row in snapshot_rows:
+            snapshots.append(
+                {
+                    "timestamp": row["timestamp"],
+                    "correlation_id": row["correlation_id"],
+                    "source": row["source"],
+                    "device_ip": row["device_ip"],
+                    "is_online": bool(row["is_online"]),
+                    "status_text": row["status_text"],
+                }
+            )
+
+        return {
+            "commands": commands,
+            "snapshots": snapshots,
+        }
+
+    def export_activity_report(
+        self,
+        file_path: str,
+        command_limit: int = 100,
+        snapshot_limit: int = 100,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        report_path = Path(file_path)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        activity = self.fetch_recent_activity(command_limit=command_limit, snapshot_limit=snapshot_limit)
+        payload = {
+            "generated_at": _utc_now_iso(),
+            "metadata": metadata or {},
+            "commands": activity["commands"],
+            "snapshots": activity["snapshots"],
+        }
+        report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return str(report_path)
+
     def purge_old_records(
         self,
         command_retention_days: int,

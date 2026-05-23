@@ -1,4 +1,5 @@
 import os
+import hashlib
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -7,13 +8,18 @@ from opensignal_its.services.safety_service import CommandSafetyService
 
 class CommandSafetyServiceTests(unittest.TestCase):
     def setUp(self):
-        self._old_key = os.environ.get("OPENSIGNAL_OPERATOR_KEY")
+        self._keys = {
+            "OPENSIGNAL_OPERATOR_KEY": os.environ.get("OPENSIGNAL_OPERATOR_KEY"),
+            "OPENSIGNAL_OPERATOR_KEY_HASH": os.environ.get("OPENSIGNAL_OPERATOR_KEY_HASH"),
+            "OPENSIGNAL_OPERATOR_KEY_HASHES": os.environ.get("OPENSIGNAL_OPERATOR_KEY_HASHES"),
+        }
 
     def tearDown(self):
-        if self._old_key is None:
-            os.environ.pop("OPENSIGNAL_OPERATOR_KEY", None)
-        else:
-            os.environ["OPENSIGNAL_OPERATOR_KEY"] = self._old_key
+        for key, value in self._keys.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
     def test_unlock_denied_when_key_not_configured(self):
         os.environ.pop("OPENSIGNAL_OPERATOR_KEY", None)
@@ -24,6 +30,15 @@ class CommandSafetyServiceTests(unittest.TestCase):
 
     def test_unlock_success_when_key_matches(self):
         os.environ["OPENSIGNAL_OPERATOR_KEY"] = "abc123"
+        ok, message, until = CommandSafetyService.unlock_write_mode("abc123", 60)
+        self.assertTrue(ok)
+        self.assertNotEqual("", until)
+        self.assertIn("unlocked", message)
+
+    def test_unlock_success_when_key_hash_matches(self):
+        digest = hashlib.sha256("abc123".encode("utf-8")).hexdigest()
+        os.environ.pop("OPENSIGNAL_OPERATOR_KEY", None)
+        os.environ["OPENSIGNAL_OPERATOR_KEY_HASH"] = f"sha256:{digest}"
         ok, message, until = CommandSafetyService.unlock_write_mode("abc123", 60)
         self.assertTrue(ok)
         self.assertNotEqual("", until)

@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -113,6 +114,38 @@ class AuditStoreTests(unittest.TestCase):
 
             self.assertEqual(1, remaining_commands)
             self.assertEqual(1, remaining_snapshots)
+
+    def test_export_activity_report_writes_json_payload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            db_path = base / "audit.db"
+            report_path = base / "reports" / "runtime.json"
+            store = AuditStore(str(db_path))
+
+            store.log_command(
+                CommandAuditRecord(
+                    timestamp="2026-01-01T00:00:00+00:00",
+                    correlation_id="corr-export",
+                    device_ip="10.0.0.1",
+                    command_type="set_mode",
+                    command_value={"mode": "free"},
+                    probe_only=False,
+                    allowed=True,
+                    success=True,
+                    error="",
+                    actor="admin:admin",
+                )
+            )
+            exported = store.export_activity_report(
+                file_path=str(report_path),
+                command_limit=10,
+                snapshot_limit=10,
+                metadata={"role": "admin"},
+            )
+
+            payload = json.loads(Path(exported).read_text(encoding="utf-8"))
+            self.assertEqual("admin", payload["metadata"]["role"])
+            self.assertEqual(1, len(payload["commands"]))
 
 
 if __name__ == "__main__":

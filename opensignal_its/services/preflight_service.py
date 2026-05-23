@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 from ..db import STORE
+from .secret_service import parse_secret_values
 
 
 def _is_production_like() -> bool:
@@ -23,15 +24,58 @@ def _parse_positive_int(env_name: str, default: int) -> int:
     return parsed
 
 
+def _has_any_secret(*env_names: str) -> bool:
+    for env_name in env_names:
+        if os.getenv(env_name, "").strip():
+            return True
+    return False
+
+
+def _plain_secret_too_short(env_name: str, minimum: int = 12) -> bool:
+    values = parse_secret_values(os.getenv(env_name, ""))
+    if not values:
+        return False
+    return any(len(value) < minimum for value in values)
+
+
 def validate_runtime_configuration() -> list[str]:
     """Return a list of blocking configuration errors."""
     errors: list[str] = []
 
     if _is_production_like():
-        if not os.getenv("OPENSIGNAL_OPERATOR_PASSWORD", "").strip():
+        if not _has_any_secret(
+            "OPENSIGNAL_OPERATOR_PASSWORD",
+            "OPENSIGNAL_OPERATOR_PASSWORD_HASH",
+            "OPENSIGNAL_OPERATOR_PASSWORD_HASHES",
+        ):
             errors.append("OPENSIGNAL_OPERATOR_PASSWORD is required in production-like environments.")
-        if not os.getenv("OPENSIGNAL_OPERATOR_KEY", "").strip():
+        if not _has_any_secret(
+            "OPENSIGNAL_OPERATOR_KEY",
+            "OPENSIGNAL_OPERATOR_KEY_HASH",
+            "OPENSIGNAL_OPERATOR_KEY_HASHES",
+        ):
             errors.append("OPENSIGNAL_OPERATOR_KEY is required in production-like environments.")
+        if not _has_any_secret(
+            "OPENSIGNAL_ADMIN_PASSWORD",
+            "OPENSIGNAL_ADMIN_PASSWORD_HASH",
+            "OPENSIGNAL_ADMIN_PASSWORD_HASHES",
+        ):
+            errors.append("OPENSIGNAL_ADMIN_PASSWORD is required in production-like environments.")
+        if not _has_any_secret(
+            "OPENSIGNAL_ADMIN_RECOVERY_KEY",
+            "OPENSIGNAL_ADMIN_RECOVERY_KEY_HASH",
+            "OPENSIGNAL_ADMIN_RECOVERY_KEY_HASHES",
+        ):
+            errors.append("OPENSIGNAL_ADMIN_RECOVERY_KEY is required in production-like environments.")
+
+        if _plain_secret_too_short("OPENSIGNAL_OPERATOR_PASSWORD"):
+            errors.append("OPENSIGNAL_OPERATOR_PASSWORD must be at least 12 chars when using plaintext values.")
+        if _plain_secret_too_short("OPENSIGNAL_OPERATOR_KEY"):
+            errors.append("OPENSIGNAL_OPERATOR_KEY must be at least 12 chars when using plaintext values.")
+        if _plain_secret_too_short("OPENSIGNAL_ADMIN_PASSWORD"):
+            errors.append("OPENSIGNAL_ADMIN_PASSWORD must be at least 12 chars when using plaintext values.")
+        if _plain_secret_too_short("OPENSIGNAL_ADMIN_RECOVERY_KEY"):
+            errors.append("OPENSIGNAL_ADMIN_RECOVERY_KEY must be at least 12 chars when using plaintext values.")
 
     for env_name, default in (
         ("OPENSIGNAL_COMMAND_RETENTION_DAYS", 90),

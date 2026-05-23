@@ -8,6 +8,7 @@ This runbook records operational requirements that must be preserved across rele
 2. Write mode is denied unless explicitly unlocked.
 3. Write commands require per-command confirmation token entry.
 4. Probe mode is the default-safe control mode.
+5. Sensitive maintenance operations require admin role.
 
 ## Required Environment Variables
 
@@ -21,14 +22,27 @@ Production-like modes are defined as `OPENSIGNAL_ENV` in: `prod`, `production`, 
 ### Optional with defaults
 
 - `OPENSIGNAL_OPERATOR_USERNAME`: Defaults to `operator`.
+- `OPENSIGNAL_ADMIN_USERNAME`: Defaults to `admin`.
 - `OPENSIGNAL_COMMAND_RETENTION_DAYS`: Defaults to `90`.
 - `OPENSIGNAL_SNAPSHOT_RETENTION_DAYS`: Defaults to `30`.
 - `OPENSIGNAL_APPLY_RETENTION_ON_START`: Defaults to `true`.
 - `OPENSIGNAL_DB_PATH`: Defaults to `traffic.db`.
+- `OPENSIGNAL_AUDIT_EXPORT_PATH`: Defaults to `runtime_reports/latest_runtime_report.json`.
 - `OPENSIGNAL_MAX_LOGIN_ATTEMPTS`: Defaults to `5`.
 - `OPENSIGNAL_LOGIN_LOCKOUT_SECONDS`: Defaults to `300`.
 - `OPENSIGNAL_ENABLE_RETENTION_SCHEDULER`: Defaults to `false`.
 - `OPENSIGNAL_RETENTION_SCHEDULE_SECONDS`: Defaults to `3600` (minimum `300`).
+
+### Secret and credential options
+
+Credentials and unlock/recovery keys support plaintext, single hash, or rotating hash sets:
+
+- Operator password: `OPENSIGNAL_OPERATOR_PASSWORD`, `OPENSIGNAL_OPERATOR_PASSWORD_HASH`, `OPENSIGNAL_OPERATOR_PASSWORD_HASHES`
+- Operator unlock key: `OPENSIGNAL_OPERATOR_KEY`, `OPENSIGNAL_OPERATOR_KEY_HASH`, `OPENSIGNAL_OPERATOR_KEY_HASHES`
+- Admin password: `OPENSIGNAL_ADMIN_PASSWORD`, `OPENSIGNAL_ADMIN_PASSWORD_HASH`, `OPENSIGNAL_ADMIN_PASSWORD_HASHES`
+- Admin recovery key: `OPENSIGNAL_ADMIN_RECOVERY_KEY`, `OPENSIGNAL_ADMIN_RECOVERY_KEY_HASH`, `OPENSIGNAL_ADMIN_RECOVERY_KEY_HASHES`
+
+Hash format is `sha256:<hex>`.
 
 ## Startup Preflight Behavior
 
@@ -36,7 +50,8 @@ At application startup, preflight checks validate runtime configuration.
 
 1. In production-like mode, required secrets must be present.
 2. Retention window variables must be positive integers.
-3. If enabled, retention cleanup is executed on startup.
+3. If plaintext secrets are used in production-like mode, each value must be at least 12 characters.
+4. If enabled, retention cleanup is executed on startup.
 
 If preflight fails, startup is blocked.
 
@@ -57,6 +72,8 @@ Retention can be applied in two ways:
 2. Manually from the dashboard maintenance action.
 3. Periodically with optional scheduler (`OPENSIGNAL_ENABLE_RETENTION_SCHEDULER=true`).
 
+Manual cleanup and audit export operations require an authenticated admin session.
+
 Retention windows:
 
 - Commands: `OPENSIGNAL_COMMAND_RETENTION_DAYS`
@@ -69,6 +86,7 @@ Use the dashboard maintenance panel to validate runtime retention state:
 1. Click **Refresh Runtime Health** to pull live scheduler + cleanup status.
 2. Confirm scheduler enabled/running state and configured interval.
 3. Verify the latest retention cleanup timestamp and outcome message.
+4. Use **Export Audit Report** to write recent command/snapshot activity plus runtime metadata to disk.
 
 ## Operator Workflow (Write Commands)
 
@@ -86,6 +104,12 @@ If any step fails, command execution is denied and denial is audited.
 2. After `OPENSIGNAL_MAX_LOGIN_ATTEMPTS`, login is temporarily locked.
 3. Lockout duration is `OPENSIGNAL_LOGIN_LOCKOUT_SECONDS`.
 4. Successful login resets failure counters and lockout state.
+
+## Admin Recovery Workflow
+
+1. Enter admin recovery key in the dashboard.
+2. Run **Reset Login Lockout**.
+3. Re-attempt operator/admin login.
 
 ## Regression Test Baseline
 

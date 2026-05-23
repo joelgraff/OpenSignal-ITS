@@ -175,6 +175,7 @@ def dashboard():
                         rx.cond(TrafficState.auto_reconnect_enabled, "AUTO RECONNECT ON", "AUTO RECONNECT OFF"),
                         color_scheme=rx.cond(TrafficState.auto_reconnect_enabled, "green", "gray"),
                     ),
+                    rx.badge(f"ROLE {TrafficState.current_role.upper()}", color_scheme="indigo"),
                     rx.badge(
                         rx.cond(
                             TrafficState.retention_scheduler_running,
@@ -299,6 +300,25 @@ def dashboard():
                         align="center",
                     ),
                     rx.text(TrafficState.auth_notice, size="2", color="gray"),
+                    rx.input(
+                        value=TrafficState.admin_recovery_key_input,
+                        on_change=TrafficState.update_admin_recovery_key_input,
+                        placeholder="Admin recovery key",
+                        type="password",
+                        width="100%",
+                    ),
+                    rx.button(
+                        "Reset Login Lockout",
+                        on_click=TrafficState.reset_login_lockout,
+                        size="2",
+                        variant="outline",
+                        width="100%",
+                    ),
+                    rx.cond(
+                        TrafficState.admin_recovery_notice != "",
+                        rx.text(TrafficState.admin_recovery_notice, size="2", color="gray"),
+                        rx.fragment(),
+                    ),
                     rx.heading("Command Safety", size="3"),
                     rx.input(
                         value=TrafficState.operator_key_input,
@@ -366,6 +386,13 @@ def dashboard():
                         variant="outline",
                         width="100%",
                     ),
+                    rx.button(
+                        "Export Audit Report",
+                        on_click=TrafficState.export_audit_report,
+                        size="2",
+                        variant="outline",
+                        width="100%",
+                    ),
                     rx.text(
                         f"Scheduler enabled: {TrafficState.retention_scheduler_enabled} | "
                         f"running: {TrafficState.retention_scheduler_running} | "
@@ -390,6 +417,11 @@ def dashboard():
                     rx.cond(
                         TrafficState.maintenance_notice != "",
                         rx.text(TrafficState.maintenance_notice, size="2", color="gray"),
+                        rx.fragment(),
+                    ),
+                    rx.cond(
+                        TrafficState.audit_export_notice != "",
+                        rx.text(TrafficState.audit_export_notice, size="2", color="gray"),
                         rx.fragment(),
                     ),
                     spacing="3",

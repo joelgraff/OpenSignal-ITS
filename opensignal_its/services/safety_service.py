@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from .secret_service import any_secret_matches, parse_secret_values
+
 
 def _parse_iso(ts: str) -> datetime | None:
     if not ts:
@@ -30,22 +32,29 @@ class CommandSafetyService:
     """Central policy checks for whether command execution is allowed."""
 
     @staticmethod
-    def required_operator_key() -> str:
-        return os.getenv("OPENSIGNAL_OPERATOR_KEY", "").strip()
+    def required_operator_key_values() -> list[str]:
+        values: list[str] = []
+        if os.getenv("OPENSIGNAL_OPERATOR_KEY", "").strip():
+            values.extend(parse_secret_values(os.getenv("OPENSIGNAL_OPERATOR_KEY", "")))
+        if os.getenv("OPENSIGNAL_OPERATOR_KEY_HASH", "").strip():
+            values.extend(parse_secret_values(os.getenv("OPENSIGNAL_OPERATOR_KEY_HASH", "")))
+        if os.getenv("OPENSIGNAL_OPERATOR_KEY_HASHES", "").strip():
+            values.extend(parse_secret_values(os.getenv("OPENSIGNAL_OPERATOR_KEY_HASHES", "")))
+        return values
 
     @staticmethod
     def unlock_write_mode(
         operator_key_input: str,
         requested_seconds: int,
     ) -> tuple[bool, str, str]:
-        required = CommandSafetyService.required_operator_key()
-        if not required:
+        required_values = CommandSafetyService.required_operator_key_values()
+        if not required_values:
             return (
                 False,
                 "Write unlock denied: OPENSIGNAL_OPERATOR_KEY is not configured.",
                 "",
             )
-        if operator_key_input.strip() != required:
+        if not any_secret_matches(operator_key_input, required_values):
             return False, "Write unlock denied: operator key is invalid.", ""
 
         bounded_seconds = max(15, min(900, requested_seconds))

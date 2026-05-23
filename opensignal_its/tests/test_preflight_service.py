@@ -12,7 +12,13 @@ class PreflightServiceTests(unittest.TestCase):
         self._keys = {
             "OPENSIGNAL_ENV": os.environ.get("OPENSIGNAL_ENV"),
             "OPENSIGNAL_OPERATOR_PASSWORD": os.environ.get("OPENSIGNAL_OPERATOR_PASSWORD"),
+            "OPENSIGNAL_OPERATOR_PASSWORD_HASH": os.environ.get("OPENSIGNAL_OPERATOR_PASSWORD_HASH"),
             "OPENSIGNAL_OPERATOR_KEY": os.environ.get("OPENSIGNAL_OPERATOR_KEY"),
+            "OPENSIGNAL_OPERATOR_KEY_HASH": os.environ.get("OPENSIGNAL_OPERATOR_KEY_HASH"),
+            "OPENSIGNAL_ADMIN_PASSWORD": os.environ.get("OPENSIGNAL_ADMIN_PASSWORD"),
+            "OPENSIGNAL_ADMIN_PASSWORD_HASH": os.environ.get("OPENSIGNAL_ADMIN_PASSWORD_HASH"),
+            "OPENSIGNAL_ADMIN_RECOVERY_KEY": os.environ.get("OPENSIGNAL_ADMIN_RECOVERY_KEY"),
+            "OPENSIGNAL_ADMIN_RECOVERY_KEY_HASH": os.environ.get("OPENSIGNAL_ADMIN_RECOVERY_KEY_HASH"),
             "OPENSIGNAL_COMMAND_RETENTION_DAYS": os.environ.get("OPENSIGNAL_COMMAND_RETENTION_DAYS"),
             "OPENSIGNAL_SNAPSHOT_RETENTION_DAYS": os.environ.get("OPENSIGNAL_SNAPSHOT_RETENTION_DAYS"),
             "OPENSIGNAL_APPLY_RETENTION_ON_START": os.environ.get("OPENSIGNAL_APPLY_RETENTION_ON_START"),
@@ -31,9 +37,13 @@ class PreflightServiceTests(unittest.TestCase):
         os.environ["OPENSIGNAL_ENV"] = "production"
         os.environ.pop("OPENSIGNAL_OPERATOR_PASSWORD", None)
         os.environ.pop("OPENSIGNAL_OPERATOR_KEY", None)
+        os.environ.pop("OPENSIGNAL_ADMIN_PASSWORD", None)
+        os.environ.pop("OPENSIGNAL_ADMIN_RECOVERY_KEY", None)
         errors = preflight_service.validate_runtime_configuration()
         self.assertTrue(any("OPENSIGNAL_OPERATOR_PASSWORD" in e for e in errors))
         self.assertTrue(any("OPENSIGNAL_OPERATOR_KEY" in e for e in errors))
+        self.assertTrue(any("OPENSIGNAL_ADMIN_PASSWORD" in e for e in errors))
+        self.assertTrue(any("OPENSIGNAL_ADMIN_RECOVERY_KEY" in e for e in errors))
 
     def test_validate_accepts_dev_without_secrets(self):
         os.environ["OPENSIGNAL_ENV"] = "dev"
@@ -69,6 +79,15 @@ class PreflightServiceTests(unittest.TestCase):
         os.environ["OPENSIGNAL_RETENTION_SCHEDULE_SECONDS"] = "120"
         errors = preflight_service.validate_runtime_configuration()
         self.assertTrue(any("OPENSIGNAL_RETENTION_SCHEDULE_SECONDS" in e for e in errors))
+
+    def test_validate_rejects_short_plaintext_secrets_in_production(self):
+        os.environ["OPENSIGNAL_ENV"] = "production"
+        os.environ["OPENSIGNAL_OPERATOR_PASSWORD"] = "short"
+        os.environ["OPENSIGNAL_OPERATOR_KEY"] = "short"
+        os.environ["OPENSIGNAL_ADMIN_PASSWORD"] = "short"
+        os.environ["OPENSIGNAL_ADMIN_RECOVERY_KEY"] = "short"
+        errors = preflight_service.validate_runtime_configuration()
+        self.assertTrue(any("at least 12 chars" in e for e in errors))
 
 
 if __name__ == "__main__":
