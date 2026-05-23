@@ -572,6 +572,8 @@ class TrafficState(rx.State):
                 self.last_updated = str(self.m60_status.get("timestamp", ""))
                 self._apply_phase_payload(self.m60_status)
                 self.active_snmp_version = "v2c" if getattr(device, "_mp_model", 1) == 1 else "v1"
+                errors = self.m60_status.get("errors", [])
+                self.error = "; ".join(errors) if errors else ""
             else:
                 self.error = self.error or f"Command failed: {cmd_type}"
         except Exception as e:

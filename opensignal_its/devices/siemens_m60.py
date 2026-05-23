@@ -457,6 +457,8 @@ class SiemensM60(Device):
         except Exception as e:
             logger.exception("SiemensM60 poll exception ip=%s", self.config.ip_address)
             self.status.errors.append(str(e))
+            self.status.is_online = False
+            self.status.status_text = "SNMPv1 poll exception"
             return self.status
 
     async def command(self, command: str, params: Dict[str, Any]) -> bool:
@@ -499,6 +501,12 @@ class SiemensM60(Device):
                         OID_PHASE_CONTROL_HOLD,
                         f"Probe manual_hold command hold={hold}",
                     )
+                if not bool(params.get("allow_all_phases", False)):
+                    self.status.errors.append(
+                        "manual_hold blocked: allow_all_phases=True required for write mode"
+                    )
+                    self.status.status_text = "Manual hold blocked by safety gate"
+                    return False
                 success = await self._set_snmp(OID_PHASE_CONTROL_HOLD, 255 if hold else 0)
                 if success:
                     self.status.status_text = "Manual hold command sent"
@@ -511,6 +519,12 @@ class SiemensM60(Device):
                         OID_PHASE_CONTROL_FORCEOFF,
                         "Probe advance_phase command",
                     )
+                if not bool(params.get("allow_all_phases", False)):
+                    self.status.errors.append(
+                        "advance_phase blocked: allow_all_phases=True required for write mode"
+                    )
+                    self.status.status_text = "Advance phase blocked by safety gate"
+                    return False
                 success = await self._set_snmp(OID_PHASE_CONTROL_FORCEOFF, 255)
                 if success:
                     self.status.status_text = "Advance phase command sent"
