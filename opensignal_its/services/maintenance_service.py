@@ -16,6 +16,8 @@ _last_cleanup_status: dict[str, Any] = {
     "message": "No retention cleanup run yet.",
     "deleted_commands": 0,
     "deleted_snapshots": 0,
+    "deleted_alarm_silences": 0,
+    "deleted_alarm_events": 0,
 }
 
 
@@ -30,6 +32,8 @@ class MaintenanceService:
     def run_retention_cleanup() -> tuple[int, int]:
         try:
             deleted_commands, deleted_snapshots = STORE.apply_retention_from_env()
+            deleted_alarm_silences = STORE.purge_expired_alarm_silences()
+            deleted_alarm_events = STORE.apply_alarm_event_retention_from_env()
         except Exception as exc:
             with _status_lock:
                 _last_cleanup_status.update(
@@ -39,6 +43,8 @@ class MaintenanceService:
                         "message": f"Retention cleanup failed: {exc}",
                         "deleted_commands": 0,
                         "deleted_snapshots": 0,
+                        "deleted_alarm_silences": 0,
+                        "deleted_alarm_events": 0,
                     }
                 )
             raise
@@ -50,10 +56,15 @@ class MaintenanceService:
                     "ok": True,
                     "message": (
                         "Retention cleanup complete. "
-                        f"Commands deleted: {deleted_commands}, snapshots deleted: {deleted_snapshots}."
+                        f"Commands deleted: {deleted_commands}, "
+                        f"snapshots deleted: {deleted_snapshots}, "
+                        f"expired alarm silences deleted: {deleted_alarm_silences}, "
+                        f"alarm events deleted: {deleted_alarm_events}."
                     ),
                     "deleted_commands": deleted_commands,
                     "deleted_snapshots": deleted_snapshots,
+                    "deleted_alarm_silences": deleted_alarm_silences,
+                    "deleted_alarm_events": deleted_alarm_events,
                 }
             )
         return deleted_commands, deleted_snapshots

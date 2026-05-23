@@ -24,6 +24,11 @@ class PreflightServiceTests(unittest.TestCase):
             "OPENSIGNAL_APPLY_RETENTION_ON_START": os.environ.get("OPENSIGNAL_APPLY_RETENTION_ON_START"),
             "OPENSIGNAL_ENABLE_RETENTION_SCHEDULER": os.environ.get("OPENSIGNAL_ENABLE_RETENTION_SCHEDULER"),
             "OPENSIGNAL_RETENTION_SCHEDULE_SECONDS": os.environ.get("OPENSIGNAL_RETENTION_SCHEDULE_SECONDS"),
+            "OPENSIGNAL_OPS_API_ENABLED": os.environ.get("OPENSIGNAL_OPS_API_ENABLED"),
+            "OPENSIGNAL_OPS_API_ALLOW_UNAUTHENTICATED": os.environ.get("OPENSIGNAL_OPS_API_ALLOW_UNAUTHENTICATED"),
+            "OPENSIGNAL_OPS_API_TOKEN": os.environ.get("OPENSIGNAL_OPS_API_TOKEN"),
+            "OPENSIGNAL_OPS_API_TOKEN_HASH": os.environ.get("OPENSIGNAL_OPS_API_TOKEN_HASH"),
+            "OPENSIGNAL_OPS_API_TOKEN_HASHES": os.environ.get("OPENSIGNAL_OPS_API_TOKEN_HASHES"),
         }
 
     def tearDown(self):
@@ -88,6 +93,33 @@ class PreflightServiceTests(unittest.TestCase):
         os.environ["OPENSIGNAL_ADMIN_RECOVERY_KEY"] = "short"
         errors = preflight_service.validate_runtime_configuration()
         self.assertTrue(any("at least 12 chars" in e for e in errors))
+
+    def test_validate_rejects_unauthenticated_ops_api_in_production(self):
+        os.environ["OPENSIGNAL_ENV"] = "production"
+        os.environ["OPENSIGNAL_OPERATOR_PASSWORD"] = "0123456789abcd"
+        os.environ["OPENSIGNAL_OPERATOR_KEY"] = "0123456789abcd"
+        os.environ["OPENSIGNAL_ADMIN_PASSWORD"] = "0123456789abcd"
+        os.environ["OPENSIGNAL_ADMIN_RECOVERY_KEY"] = "0123456789abcd"
+        os.environ["OPENSIGNAL_OPS_API_ENABLED"] = "true"
+        os.environ.pop("OPENSIGNAL_OPS_API_TOKEN", None)
+        os.environ.pop("OPENSIGNAL_OPS_API_TOKEN_HASH", None)
+        os.environ.pop("OPENSIGNAL_OPS_API_TOKEN_HASHES", None)
+        os.environ["OPENSIGNAL_OPS_API_ALLOW_UNAUTHENTICATED"] = "false"
+
+        errors = preflight_service.validate_runtime_configuration()
+        self.assertTrue(any("Unsafe ops API exposure" in e for e in errors))
+
+    def test_validate_allows_authenticated_ops_api_in_production(self):
+        os.environ["OPENSIGNAL_ENV"] = "production"
+        os.environ["OPENSIGNAL_OPERATOR_PASSWORD"] = "0123456789abcd"
+        os.environ["OPENSIGNAL_OPERATOR_KEY"] = "0123456789abcd"
+        os.environ["OPENSIGNAL_ADMIN_PASSWORD"] = "0123456789abcd"
+        os.environ["OPENSIGNAL_ADMIN_RECOVERY_KEY"] = "0123456789abcd"
+        os.environ["OPENSIGNAL_OPS_API_ENABLED"] = "true"
+        os.environ["OPENSIGNAL_OPS_API_TOKEN"] = "0123456789abcd"
+
+        errors = preflight_service.validate_runtime_configuration()
+        self.assertFalse(any("Unsafe ops API exposure" in e for e in errors))
 
 
 if __name__ == "__main__":

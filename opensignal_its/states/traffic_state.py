@@ -17,6 +17,7 @@ from ..services import (
     EventService,
     FleetService,
     MaintenanceService,
+    OpsApiService,
     OperatorAuthService,
     PollingService,
     scheduler_status,
@@ -74,8 +75,20 @@ class TrafficState(rx.State):
     runtime_registry_summary: str = "Runtime registry idle."
     runtime_registry_rows: list[str] = []
     event_notice: str = "Event timeline idle."
+    event_window: str = "1h"
     event_timeline_rows: list[str] = []
     alarm_rows: list[str] = []
+    acknowledged_alarm_rows: list[str] = []
+    silenced_alarm_rows: list[str] = []
+    alarm_history_rows: list[str] = []
+    alarm_history_action_filter: str = "all"
+    alarm_history_actor_filter: str = ""
+    alarm_history_key_filter: str = ""
+    alarm_history_limit_text: str = "50"
+    selected_alarm_key: str = ""
+    alarm_note_input: str = ""
+    alarm_silence_minutes_text: str = "30"
+    alarm_action_notice: str = ""
     login_username_input: str = ""
     login_password_input: str = ""
     is_authenticated: bool = False
@@ -102,6 +115,10 @@ class TrafficState(rx.State):
     audit_export_notice: str = ""
     audit_export_path: str = ""
     runtime_health_notice: str = "Runtime health not refreshed yet."
+    runtime_storage_summary: str = "Storage health not refreshed yet."
+    runtime_storage_warning_rows: list[str] = []
+    runtime_storage_alert_rows: list[str] = []
+    runtime_alert_dispatch_summary: str = "Alert dispatch idle."
     retention_scheduler_enabled: bool = False
     retention_scheduler_running: bool = False
     retention_scheduler_interval_text: str = "unknown"
@@ -166,6 +183,30 @@ class TrafficState(rx.State):
     def update_confirmation_input(self, value: str):
         self.confirmation_input = value
 
+    def update_selected_alarm_key(self, value: str):
+        self.selected_alarm_key = value
+
+    def update_event_window(self, value: str):
+        self.event_window = value
+
+    def update_alarm_note_input(self, value: str):
+        self.alarm_note_input = value
+
+    def update_alarm_silence_minutes_text(self, value: str):
+        self.alarm_silence_minutes_text = value
+
+    def update_alarm_history_action_filter(self, value: str):
+        self.alarm_history_action_filter = value
+
+    def update_alarm_history_actor_filter(self, value: str):
+        self.alarm_history_actor_filter = value
+
+    def update_alarm_history_key_filter(self, value: str):
+        self.alarm_history_key_filter = value
+
+    def update_alarm_history_limit_text(self, value: str):
+        self.alarm_history_limit_text = value
+
     def update_auto_refresh_enabled(self, value: bool):
         self.auto_refresh_enabled = value
 
@@ -201,6 +242,28 @@ class TrafficState(rx.State):
             return max(1, int(self.managed_polling_interval_text))
         except ValueError:
             return 5
+
+    def _event_window_minutes(self) -> int | None:
+        normalized = self.event_window.strip().lower()
+        mapping: dict[str, int | None] = {
+            "15m": 15,
+            "1h": 60,
+            "24h": 24 * 60,
+            "all": None,
+        }
+        return mapping.get(normalized, 60)
+
+    def _alarm_silence_minutes(self) -> int:
+        try:
+            return max(1, int(self.alarm_silence_minutes_text))
+        except ValueError:
+            return 30
+
+    def _alarm_history_limit(self) -> int:
+        try:
+            return min(200, max(5, int(self.alarm_history_limit_text)))
+        except ValueError:
+            return 50
 
     @staticmethod
     def _max_login_attempts() -> int:
@@ -544,10 +607,10 @@ class TrafficState(rx.State):
             self.error = self.maintenance_notice
             return
         try:
-            deleted_commands, deleted_snapshots = MaintenanceService.run_retention_cleanup()
-            self.maintenance_notice = (
-                f"Retention cleanup complete. Commands deleted: {deleted_commands}, "
-                f"snapshots deleted: {deleted_snapshots}."
+            MaintenanceService.run_retention_cleanup()
+            cleanup = MaintenanceService.get_cleanup_status()
+            self.maintenance_notice = str(
+                cleanup.get("message", "Retention cleanup complete.")
             )
             self.error = ""
         except Exception as exc:
@@ -607,8 +670,42 @@ class TrafficState(rx.State):
             scheduler_line = f"{scheduler_line} ({self.retention_scheduler_error})"
 
         cleanup_at = self.last_retention_cleanup_at if self.last_retention_cleanup_at else "never"
+        ops_health = OpsApiService.health_snapshot()
+        storage = dict(ops_health.get("storage", {}))
+        counts = dict(storage.get("table_row_counts", {}))
+        self.runtime_storage_warning_rows = [str(row) for row in storage.get("warnings", [])]
+        self.runtime_storage_alert_rows = [str(row) for row in storage.get("persistent_alerts", [])]
+        dispatch = dict(storage.get("alert_dispatch", {}))
+        if dispatch:
+            self.runtime_alert_dispatch_summary = (
+                "Alert dispatch: "
+                f"enabled={bool(dispatch.get('enabled', False))}, "
+                f"sent={int(dispatch.get('sent', 0))}, "
+                f"skipped={int(dispatch.get('skipped', 0))}, "
+                f"failed={int(dispatch.get('failed', 0))}, "
+                f"deadlettered={int(dispatch.get('deadlettered', 0))}."
+            )
+        else:
+            self.runtime_alert_dispatch_summary = "Alert dispatch unavailable."
+        if counts:
+            ordered = ", ".join(f"{k}={int(v)}" for k, v in sorted(counts.items()))
+            self.runtime_storage_summary = f"Storage row counts: {ordered}"
+        else:
+            self.runtime_storage_summary = "Storage row counts unavailable."
+
+        storage_warning_text = (
+            f" Storage warnings: {len(self.runtime_storage_warning_rows)}."
+            if self.runtime_storage_warning_rows
+            else " Storage warnings: none."
+        )
+        storage_alert_text = (
+            f" Persistent alerts: {len(self.runtime_storage_alert_rows)}."
+            if self.runtime_storage_alert_rows
+            else " Persistent alerts: none."
+        )
         self.runtime_health_notice = (
-            f"{scheduler_line}. Last cleanup: {cleanup_at}. {self.last_retention_cleanup_result}"
+            f"{scheduler_line}. Last cleanup: {cleanup_at}. "
+            f"{self.last_retention_cleanup_result}{storage_warning_text}{storage_alert_text}"
         )
 
     async def confirm_pending_command(self):
@@ -727,17 +824,110 @@ class TrafficState(rx.State):
 
     def refresh_events_and_alarms(self):
         try:
-            payload = EventService.build_timeline_and_alarms(command_limit=200, snapshot_limit=200)
+            payload = EventService.build_timeline_and_alarms(
+                command_limit=200,
+                snapshot_limit=200,
+                window_minutes=self._event_window_minutes(),
+            )
             self.event_timeline_rows = list(payload.get("timeline", []))
             self.alarm_rows = list(payload.get("alarms", []))
+            self.acknowledged_alarm_rows = list(payload.get("acknowledged_alarms", []))
+            self.silenced_alarm_rows = list(payload.get("silenced_alarms", []))
+            self.alarm_history_rows = EventService.list_alarm_history_rows(
+                limit=self._alarm_history_limit(),
+                action_filter=self.alarm_history_action_filter,
+                actor_contains=self.alarm_history_actor_filter,
+                key_contains=self.alarm_history_key_filter,
+            )
             self.event_notice = (
-                f"Event timeline refreshed: {len(self.event_timeline_rows)} entries, "
-                f"{len(self.alarm_rows)} active alarms."
+                f"Event timeline refreshed ({self.event_window}): {len(self.event_timeline_rows)} entries, "
+                f"{len(self.alarm_rows)} active alarms, "
+                f"{len(self.acknowledged_alarm_rows)} acknowledged alarms, "
+                f"{len(self.silenced_alarm_rows)} silenced alarms, "
+                f"{len(self.alarm_history_rows)} history rows."
             )
             self.error = ""
         except Exception as exc:
             self.event_notice = f"Event refresh failed: {exc}"
             self.error = self.event_notice
+
+    def acknowledge_selected_alarm(self):
+        if not self._is_role_authorized({"admin"}):
+            self.alarm_action_notice = "Alarm acknowledge denied: admin authentication required."
+            self.error = self.alarm_action_notice
+            return
+
+        ok, message = EventService.acknowledge_alarm(
+            alarm_key=self.selected_alarm_key,
+            actor=self._actor_name(),
+            note=self.alarm_note_input,
+        )
+        self.alarm_action_notice = message
+        self.error = "" if ok else message
+        if ok:
+            self.refresh_events_and_alarms()
+
+    def clear_selected_alarm_acknowledgement(self):
+        if not self._is_role_authorized({"admin"}):
+            self.alarm_action_notice = "Alarm clear denied: admin authentication required."
+            self.error = self.alarm_action_notice
+            return
+
+        ok, message = EventService.clear_alarm_acknowledgement_with_actor(
+            self.selected_alarm_key,
+            actor=self._actor_name(),
+            note=self.alarm_note_input,
+        )
+        self.alarm_action_notice = message
+        self.error = "" if ok else message
+        if ok:
+            self.refresh_events_and_alarms()
+
+    def silence_selected_alarm(self):
+        if not self._is_role_authorized({"admin"}):
+            self.alarm_action_notice = "Alarm silence denied: admin authentication required."
+            self.error = self.alarm_action_notice
+            return
+
+        ok, message = EventService.silence_alarm(
+            alarm_key=self.selected_alarm_key,
+            actor=self._actor_name(),
+            silence_minutes=self._alarm_silence_minutes(),
+            note=self.alarm_note_input,
+        )
+        self.alarm_action_notice = message
+        self.error = "" if ok else message
+        if ok:
+            self.refresh_events_and_alarms()
+
+    def clear_selected_alarm_silence(self):
+        if not self._is_role_authorized({"admin"}):
+            self.alarm_action_notice = "Alarm silence clear denied: admin authentication required."
+            self.error = self.alarm_action_notice
+            return
+
+        ok, message = EventService.clear_alarm_silence_with_actor(
+            self.selected_alarm_key,
+            actor=self._actor_name(),
+            note=self.alarm_note_input,
+        )
+        self.alarm_action_notice = message
+        self.error = "" if ok else message
+        if ok:
+            self.refresh_events_and_alarms()
+
+    def apply_selected_alarm_silence_policy(self):
+        minutes = EventService.recommended_silence_minutes(self.selected_alarm_key)
+        self.alarm_silence_minutes_text = str(minutes)
+        if self.selected_alarm_key.strip():
+            self.alarm_action_notice = (
+                f"Applied silence policy: {minutes} minutes for selected alarm."
+            )
+        else:
+            self.alarm_action_notice = (
+                f"Applied default silence policy: {minutes} minutes."
+            )
+        self.error = ""
 
     async def start_selected_managed_polling(self):
         device_type, device_id, config = self._selected_device_target()

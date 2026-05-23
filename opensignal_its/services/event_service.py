@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..db import STORE
@@ -12,9 +12,12 @@ from ..db import STORE
 
 def _parse_iso(ts: str) -> datetime:
     try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
     except Exception:
-        return datetime.min
+        return datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _int_env(name: str, default: int) -> int:
@@ -25,15 +28,59 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _alarm_field(alarm_key: str, field: str) -> str:
+    token = f"{field}="
+    for part in alarm_key.split():
+        if part.startswith(token):
+            return part[len(token):].strip().lower()
+    return ""
+
+
 class EventService:
+    @staticmethod
+    def storage_table_counts() -> dict[str, int]:
+        return STORE.table_row_counts()
+
+    @staticmethod
+    def recommended_silence_minutes(alarm_key: str) -> int:
+        key = alarm_key.strip()
+        default_minutes = _int_env("OPENSIGNAL_ALARM_SILENCE_DEFAULT_MINUTES", 30)
+        if not key:
+            return default_minutes
+
+        severity = _alarm_field(key, "severity")
+        alarm_type = _alarm_field(key, "type")
+
+        if alarm_type == "offline-streak":
+            return _int_env("OPENSIGNAL_ALARM_SILENCE_OFFLINE_STREAK_MINUTES", 15)
+        if alarm_type == "command-failure-streak":
+            return _int_env("OPENSIGNAL_ALARM_SILENCE_COMMAND_FAILURE_STREAK_MINUTES", 20)
+
+        if severity == "critical":
+            return _int_env("OPENSIGNAL_ALARM_SILENCE_CRITICAL_MINUTES", 15)
+        if severity == "high":
+            return _int_env("OPENSIGNAL_ALARM_SILENCE_HIGH_MINUTES", 20)
+
+        return default_minutes
+
     @staticmethod
     def build_timeline_and_alarms(
         command_limit: int = 200,
         snapshot_limit: int = 200,
+        window_minutes: int | None = 60,
     ) -> dict[str, list[str]]:
         activity = STORE.fetch_recent_activity(command_limit=command_limit, snapshot_limit=snapshot_limit)
         commands = list(activity.get("commands", []))
         snapshots = list(activity.get("snapshots", []))
+
+        if window_minutes is not None:
+            window_start = datetime.now(timezone.utc) - timedelta(minutes=max(1, window_minutes))
+            commands = [
+                c for c in commands if _parse_iso(str(c.get("timestamp", ""))) >= window_start
+            ]
+            snapshots = [
+                s for s in snapshots if _parse_iso(str(s.get("timestamp", ""))) >= window_start
+            ]
 
         timeline_items: list[tuple[datetime, str]] = []
         for cmd in commands:
@@ -73,7 +120,7 @@ class EventService:
         timeline_items.sort(key=lambda item: item[0], reverse=True)
         timeline = [line for _dt, line in timeline_items]
 
-        alarms: list[str] = []
+        alarm_candidates: list[tuple[int, str]] = []
         offline_threshold = _int_env("OPENSIGNAL_ALARM_OFFLINE_SNAPSHOT_STREAK", 3)
         command_fail_threshold = _int_env("OPENSIGNAL_ALARM_COMMAND_FAILURE_STREAK", 3)
 
@@ -86,20 +133,163 @@ class EventService:
             commands_by_device[str(cmd.get("device_ip", "unknown"))].append(cmd)
 
         for device_ip, device_snaps in snapshots_by_device.items():
-            recent = device_snaps[:offline_threshold]
+            ordered = sorted(
+                device_snaps,
+                key=lambda row: _parse_iso(str(row.get("timestamp", ""))),
+                reverse=True,
+            )
+            recent = ordered[:offline_threshold]
             if len(recent) >= offline_threshold and all(not bool(s.get("is_online", False)) for s in recent):
-                alarms.append(
-                    f"ALARM offline-streak device={device_ip} count={offline_threshold}"
+                alarm_candidates.append(
+                    (
+                        2,
+                        f"ALARM severity=critical type=offline-streak device={device_ip} threshold={offline_threshold}",
+                    )
                 )
 
         for device_ip, device_cmds in commands_by_device.items():
-            recent = device_cmds[:command_fail_threshold]
+            ordered = sorted(
+                device_cmds,
+                key=lambda row: _parse_iso(str(row.get("timestamp", ""))),
+                reverse=True,
+            )
+            recent = ordered[:command_fail_threshold]
             if len(recent) >= command_fail_threshold and all(not bool(c.get("success", False)) for c in recent):
-                alarms.append(
-                    f"ALARM command-failure-streak device={device_ip} count={command_fail_threshold}"
+                alarm_candidates.append(
+                    (
+                        1,
+                        (
+                            "ALARM severity=high type=command-failure-streak "
+                            f"device={device_ip} threshold={command_fail_threshold}"
+                        ),
+                    )
+                )
+
+        alarm_candidates.sort(key=lambda item: (-item[0], item[1]))
+        alarms = [alarm for _rank, alarm in alarm_candidates]
+
+        acknowledgements = STORE.list_alarm_acknowledgements()
+        silences = STORE.list_alarm_silences()
+        active_alarms: list[str] = []
+        acknowledged_alarms: list[str] = []
+        silenced_alarms: list[str] = []
+        for alarm in alarms:
+            silence = silences.get(alarm)
+            if silence is not None:
+                silenced_alarms.append(
+                    (
+                        f"{alarm} [SILENCED by {silence['silenced_by']} "
+                        f"until {silence['silenced_until']}]"
+                    )
+                )
+                continue
+
+            ack = acknowledgements.get(alarm)
+            if ack is None:
+                active_alarms.append(alarm)
+            else:
+                acknowledged_alarms.append(
+                    f"{alarm} [ACK by {ack['acknowledged_by']} at {ack['acknowledged_at']}]"
                 )
 
         return {
             "timeline": timeline,
-            "alarms": alarms,
+            "alarms": active_alarms,
+            "acknowledged_alarms": acknowledged_alarms,
+            "silenced_alarms": silenced_alarms,
         }
+
+    @staticmethod
+    def acknowledge_alarm(alarm_key: str, actor: str, note: str = "") -> tuple[bool, str]:
+        key = alarm_key.strip()
+        if not key:
+            return False, "Alarm acknowledge failed: alarm key is required."
+        STORE.acknowledge_alarm(key, actor, note)
+        return True, f"Alarm acknowledged: {key}"
+
+    @staticmethod
+    def clear_alarm_acknowledgement(alarm_key: str) -> tuple[bool, str]:
+        return EventService.clear_alarm_acknowledgement_with_actor(alarm_key, actor="system")
+
+    @staticmethod
+    def clear_alarm_acknowledgement_with_actor(
+        alarm_key: str,
+        actor: str,
+        note: str = "",
+    ) -> tuple[bool, str]:
+        key = alarm_key.strip()
+        if not key:
+            return False, "Alarm clear failed: alarm key is required."
+        STORE.clear_alarm_acknowledgement_with_actor(key, actor=actor, note=note)
+        return True, f"Alarm acknowledgement cleared: {key}"
+
+    @staticmethod
+    def silence_alarm(
+        alarm_key: str,
+        actor: str,
+        silence_minutes: int,
+        note: str = "",
+    ) -> tuple[bool, str]:
+        key = alarm_key.strip()
+        if not key:
+            return False, "Alarm silence failed: alarm key is required."
+        try:
+            minutes = max(1, int(silence_minutes))
+        except ValueError:
+            return False, "Alarm silence failed: minutes must be numeric."
+        STORE.silence_alarm(key, actor, minutes, note)
+        return True, f"Alarm silenced for {minutes} minutes: {key}"
+
+    @staticmethod
+    def clear_alarm_silence(alarm_key: str) -> tuple[bool, str]:
+        return EventService.clear_alarm_silence_with_actor(alarm_key, actor="system")
+
+    @staticmethod
+    def clear_alarm_silence_with_actor(
+        alarm_key: str,
+        actor: str,
+        note: str = "",
+    ) -> tuple[bool, str]:
+        key = alarm_key.strip()
+        if not key:
+            return False, "Alarm silence clear failed: alarm key is required."
+        STORE.clear_alarm_silence_with_actor(key, actor=actor, note=note)
+        return True, f"Alarm silence cleared: {key}"
+
+    @staticmethod
+    def list_alarm_history_rows(
+        limit: int = 50,
+        action_filter: str = "all",
+        actor_contains: str = "",
+        key_contains: str = "",
+    ) -> list[str]:
+        events = STORE.list_alarm_events(limit=max(500, limit))
+        normalized_action = action_filter.strip().lower()
+        actor_fragment = actor_contains.strip().lower()
+        key_fragment = key_contains.strip().lower()
+
+        filtered: list[dict[str, str]] = []
+        for event in events:
+            action = str(event.get("action", "")).lower()
+            actor = str(event.get("actor", "")).lower()
+            key = str(event.get("alarm_key", "")).lower()
+
+            if normalized_action and normalized_action != "all" and action != normalized_action:
+                continue
+            if actor_fragment and actor_fragment not in actor:
+                continue
+            if key_fragment and key_fragment not in key:
+                continue
+            filtered.append(event)
+
+        filtered = filtered[: max(1, int(limit))]
+        rows: list[str] = []
+        for event in filtered:
+            ts = str(event.get("timestamp", ""))
+            action = str(event.get("action", "unknown"))
+            actor = str(event.get("actor", "unknown"))
+            key = str(event.get("alarm_key", ""))
+            note = str(event.get("note", "")).strip()
+            suffix = f" note={note}" if note else ""
+            rows.append(f"[{ts}] ALARM_EVENT {action} actor={actor} key={key}{suffix}")
+        return rows

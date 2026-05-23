@@ -54,6 +54,7 @@ At application startup, preflight checks validate runtime configuration.
 2. Retention window variables must be positive integers.
 3. If plaintext secrets are used in production-like mode, each value must be at least 12 characters.
 4. If enabled, retention cleanup is executed on startup.
+5. In production-like mode, ops API must be token-protected when enabled unless `OPENSIGNAL_OPS_API_ALLOW_UNAUTHENTICATED=true` is explicitly set.
 
 If preflight fails, startup is blocked.
 
@@ -80,6 +81,10 @@ Retention windows:
 
 - Commands: `OPENSIGNAL_COMMAND_RETENTION_DAYS`
 - Snapshots: `OPENSIGNAL_SNAPSHOT_RETENTION_DAYS`
+- Alarm events: `OPENSIGNAL_ALARM_EVENT_RETENTION_DAYS`
+
+Each retention run also removes expired alarm silences from the `alarm_silences` table.
+Retention status now reports deleted alarm event counts.
 
 ### Runtime Health Panel
 
@@ -89,6 +94,64 @@ Use the dashboard maintenance panel to validate runtime retention state:
 2. Confirm scheduler enabled/running state and configured interval.
 3. Verify the latest retention cleanup timestamp and outcome message.
 4. Use **Export Audit Report** to write recent command/snapshot activity plus runtime metadata to disk.
+
+## Operational API Endpoints
+
+The app exposes read-only operational JSON endpoints for automation and NOC tooling:
+
+1. `GET /api/ops/health`
+2. `GET /api/ops/alarms`
+: Query params: `window_minutes`, `command_limit`, `snapshot_limit`
+3. `GET /api/ops/alarm-history`
+: Query params: `limit`, `action_filter`, `actor_contains`, `key_contains`
+4. `GET /api/ops/audit-export`
+: Query params: `file_path`, `command_limit`, `snapshot_limit`
+
+All responses include a `generated_at` timestamp.
+Audit export returns the resolved report `file_path` and writes command/snapshot activity JSON to disk.
+Health payload includes storage table row counts under `storage.table_row_counts`.
+Health payload includes growth warnings under `storage.warnings`.
+Warnings include severity levels (`warn`, `critical`) and persistence-based alerts under `storage.persistent_alerts`.
+
+Optional webhook dispatch for persistent alerts can be enabled with:
+
+- `OPENSIGNAL_ALERT_WEBHOOK_ENABLED`
+- `OPENSIGNAL_ALERT_WEBHOOK_URL`
+- `OPENSIGNAL_ALERT_WEBHOOK_DEDUP_SECONDS`
+- `OPENSIGNAL_ALERT_WEBHOOK_TIMEOUT_SECONDS`
+- `OPENSIGNAL_ALERT_WEBHOOK_MAX_RETRIES`
+
+Dispatch status is exposed in ops health payload under `storage.alert_dispatch`.
+
+Persistent alert dispatch uses durable SQLite tables:
+
+- `alert_webhook_queue` for pending retries
+- `alert_webhook_deadletter` for exhausted retry attempts
+
+Dead-letter volume is visible through storage table row counts in ops health.
+
+Storage warning threshold environment variables:
+
+- `OPENSIGNAL_DB_WARN_COMMAND_AUDIT_ROWS`
+- `OPENSIGNAL_DB_WARN_STATUS_SNAPSHOTS_ROWS`
+- `OPENSIGNAL_DB_WARN_ALARM_ACK_ROWS`
+- `OPENSIGNAL_DB_WARN_ALARM_SILENCES_ROWS`
+- `OPENSIGNAL_DB_WARN_ALARM_EVENTS_ROWS`
+- `OPENSIGNAL_DB_WARN_ALERT_WEBHOOK_QUEUE_ROWS`
+- `OPENSIGNAL_DB_WARN_ALERT_WEBHOOK_DEADLETTER_ROWS`
+- `OPENSIGNAL_DB_WARN_PERSISTENCE_CHECKS`
+
+For deterministic unit/integration tests, endpoint handlers are also exposed in app module map `OPS_API_ENDPOINTS`.
+
+Access controls:
+
+- `OPENSIGNAL_OPS_API_ENABLED` (`true`/`false`) to enable or disable route registration.
+- Optional token controls:
+	- `OPENSIGNAL_OPS_API_TOKEN`
+	- `OPENSIGNAL_OPS_API_TOKEN_HASH`
+	- `OPENSIGNAL_OPS_API_TOKEN_HASHES`
+
+When token controls are configured, include `api_token` query parameter with each request.
 
 ### Managed Polling Runtime Controls
 
@@ -105,8 +168,23 @@ Use fleet controls to manage long-lived runtime device polling tasks:
 The dashboard can compute event timeline and alarms from persisted command/snapshot activity:
 
 1. Use **Refresh Events** to rebuild timeline rows from recent command and snapshot history.
-2. Offline streak alarm triggers when a device has N consecutive offline snapshots.
-3. Command failure streak alarm triggers when a device has N consecutive failed commands.
+2. Use the window controls (**15m**, **1h**, **24h**, **All**) to focus on current incidents or review longer history.
+3. Offline streak alarm triggers when a device has N consecutive offline snapshots.
+4. Command failure streak alarm triggers when a device has N consecutive failed commands.
+5. Admin users can acknowledge alarms with a note and later clear acknowledgements.
+6. Alarm list is severity-prioritized (critical before high).
+7. Admin users can silence individual alarms for a bounded number of minutes; silenced alarms are hidden from active alarms until expiry or manual clear.
+8. Use **Use Silence Policy** to auto-fill silence duration from policy defaults.
+9. Review **Alarm Action History** to verify acknowledge/silence/clear activity with actor and timestamp.
+10. Use history filters to focus by action type, actor fragment, alarm key fragment, and row limit.
+
+Silence policy environment variables:
+
+- `OPENSIGNAL_ALARM_SILENCE_DEFAULT_MINUTES` (fallback for unknown alarms)
+- `OPENSIGNAL_ALARM_SILENCE_CRITICAL_MINUTES`
+- `OPENSIGNAL_ALARM_SILENCE_HIGH_MINUTES`
+- `OPENSIGNAL_ALARM_SILENCE_OFFLINE_STREAK_MINUTES`
+- `OPENSIGNAL_ALARM_SILENCE_COMMAND_FAILURE_STREAK_MINUTES`
 
 ## Operator Workflow (Write Commands)
 

@@ -25,3 +25,11 @@ For full instructions and troubleshooting, see:
 - [docs/ubuntu-development-setup.md](docs/ubuntu-development-setup.md)
 - [docs/operations-runbook.md](docs/operations-runbook.md)
 - [docs/sprint1-device-registry-plan.md](docs/sprint1-device-registry-plan.md)
+
+Operational read-only API endpoints are also available:
+
+- `/api/ops/health`
+- `/api/ops/alarms`
+- `/api/ops/alarm-history`
+
+Set `OPENSIGNAL_OPS_API_ENABLED=false` to disable these routes. If token variables are configured, pass `api_token` query parameter with requests.

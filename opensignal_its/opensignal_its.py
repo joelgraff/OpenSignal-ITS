@@ -1,7 +1,7 @@
 import reflex as rx
 
 from .components.device_card import timing_panel
-from .services import bootstrap_runtime_safety, start_retention_scheduler
+from .services import OpsApiService, bootstrap_runtime_safety, start_retention_scheduler
 from .states.traffic_state import TrafficState
 
 
@@ -462,6 +462,24 @@ def dashboard():
                         width="100%",
                     ),
                     rx.text(TrafficState.runtime_health_notice, size="2", color="gray"),
+                    rx.text(TrafficState.runtime_storage_summary, size="1", color="gray"),
+                    rx.text(TrafficState.runtime_alert_dispatch_summary, size="1", color="gray"),
+                    rx.cond(
+                        TrafficState.runtime_storage_warning_rows != [],
+                        rx.foreach(
+                            TrafficState.runtime_storage_warning_rows,
+                            lambda row: rx.text(row, size="1", color="tomato"),
+                        ),
+                        rx.fragment(),
+                    ),
+                    rx.cond(
+                        TrafficState.runtime_storage_alert_rows != [],
+                        rx.foreach(
+                            TrafficState.runtime_storage_alert_rows,
+                            lambda row: rx.text(row, size="1", color="red"),
+                        ),
+                        rx.fragment(),
+                    ),
                     rx.button(
                         "Run Retention Cleanup",
                         on_click=TrafficState.run_retention_cleanup,
@@ -515,6 +533,73 @@ def dashboard():
                         variant="outline",
                         width="100%",
                     ),
+                    rx.hstack(
+                        rx.button("15m", on_click=lambda: TrafficState.update_event_window("15m"), size="1", variant="soft"),
+                        rx.button("1h", on_click=lambda: TrafficState.update_event_window("1h"), size="1", variant="soft"),
+                        rx.button("24h", on_click=lambda: TrafficState.update_event_window("24h"), size="1", variant="soft"),
+                        rx.button("All", on_click=lambda: TrafficState.update_event_window("all"), size="1", variant="soft"),
+                        width="100%",
+                        spacing="2",
+                    ),
+                    rx.input(
+                        value=TrafficState.selected_alarm_key,
+                        on_change=TrafficState.update_selected_alarm_key,
+                        placeholder="Alarm key to acknowledge/clear",
+                        width="100%",
+                    ),
+                    rx.input(
+                        value=TrafficState.alarm_note_input,
+                        on_change=TrafficState.update_alarm_note_input,
+                        placeholder="Alarm note (optional)",
+                        width="100%",
+                    ),
+                    rx.input(
+                        value=TrafficState.alarm_silence_minutes_text,
+                        on_change=TrafficState.update_alarm_silence_minutes_text,
+                        placeholder="Silence minutes (default 30)",
+                        width="100%",
+                    ),
+                    rx.button(
+                        "Use Silence Policy",
+                        on_click=TrafficState.apply_selected_alarm_silence_policy,
+                        size="2",
+                        variant="outline",
+                        width="100%",
+                    ),
+                    rx.hstack(
+                        rx.button(
+                            "Acknowledge Alarm",
+                            on_click=TrafficState.acknowledge_selected_alarm,
+                            size="2",
+                            variant="outline",
+                        ),
+                        rx.button(
+                            "Clear Alarm Ack",
+                            on_click=TrafficState.clear_selected_alarm_acknowledgement,
+                            size="2",
+                            variant="outline",
+                        ),
+                        rx.button(
+                            "Silence Alarm",
+                            on_click=TrafficState.silence_selected_alarm,
+                            size="2",
+                            variant="outline",
+                        ),
+                        rx.button(
+                            "Clear Silence",
+                            on_click=TrafficState.clear_selected_alarm_silence,
+                            size="2",
+                            variant="outline",
+                        ),
+                        width="100%",
+                        spacing="2",
+                        align="center",
+                    ),
+                    rx.cond(
+                        TrafficState.alarm_action_notice != "",
+                        rx.text(TrafficState.alarm_action_notice, size="2", color="gray"),
+                        rx.fragment(),
+                    ),
                     rx.text(TrafficState.event_notice, size="2", color="gray"),
                     rx.cond(
                         TrafficState.alarm_rows != [],
@@ -523,6 +608,70 @@ def dashboard():
                             lambda row: rx.text(row, size="1", color="tomato"),
                         ),
                         rx.text("No active alarms.", size="1", color="gray"),
+                    ),
+                    rx.cond(
+                        TrafficState.acknowledged_alarm_rows != [],
+                        rx.foreach(
+                            TrafficState.acknowledged_alarm_rows,
+                            lambda row: rx.text(row, size="1", color="green"),
+                        ),
+                        rx.text("No acknowledged alarms.", size="1", color="gray"),
+                    ),
+                    rx.cond(
+                        TrafficState.silenced_alarm_rows != [],
+                        rx.foreach(
+                            TrafficState.silenced_alarm_rows,
+                            lambda row: rx.text(row, size="1", color="orange"),
+                        ),
+                        rx.text("No silenced alarms.", size="1", color="gray"),
+                    ),
+                    rx.heading("Alarm Action History", size="2"),
+                    rx.hstack(
+                        rx.button("All", on_click=lambda: TrafficState.update_alarm_history_action_filter("all"), size="1", variant="soft"),
+                        rx.button("Ack", on_click=lambda: TrafficState.update_alarm_history_action_filter("acknowledge"), size="1", variant="soft"),
+                        rx.button("Clear Ack", on_click=lambda: TrafficState.update_alarm_history_action_filter("clear_acknowledgement"), size="1", variant="soft"),
+                        rx.button("Silence", on_click=lambda: TrafficState.update_alarm_history_action_filter("silence"), size="1", variant="soft"),
+                        rx.button("Clear Silence", on_click=lambda: TrafficState.update_alarm_history_action_filter("clear_silence"), size="1", variant="soft"),
+                        width="100%",
+                        spacing="2",
+                    ),
+                    rx.input(
+                        value=TrafficState.alarm_history_actor_filter,
+                        on_change=TrafficState.update_alarm_history_actor_filter,
+                        placeholder="History actor filter (contains)",
+                        width="100%",
+                    ),
+                    rx.input(
+                        value=TrafficState.alarm_history_key_filter,
+                        on_change=TrafficState.update_alarm_history_key_filter,
+                        placeholder="History alarm key filter (contains)",
+                        width="100%",
+                    ),
+                    rx.input(
+                        value=TrafficState.alarm_history_limit_text,
+                        on_change=TrafficState.update_alarm_history_limit_text,
+                        placeholder="History row limit (5-200)",
+                        width="100%",
+                    ),
+                    rx.button(
+                        "Apply History Filters",
+                        on_click=TrafficState.refresh_events_and_alarms,
+                        size="1",
+                        variant="outline",
+                        width="100%",
+                    ),
+                    rx.cond(
+                        TrafficState.alarm_history_rows != [],
+                        rx.box(
+                            rx.foreach(
+                                TrafficState.alarm_history_rows,
+                                lambda row: rx.text(row, size="1", color="gray"),
+                            ),
+                            max_height="180px",
+                            overflow_y="auto",
+                            width="100%",
+                        ),
+                        rx.text("No alarm action history.", size="1", color="gray"),
                     ),
                     rx.foreach(
                         TrafficState.event_timeline_rows,
@@ -570,3 +719,89 @@ def dashboard():
 
 app = rx.App()
 app.add_page(dashboard, route="/", title="OpenSignal ITS")
+OPS_API_ENDPOINTS: dict[str, object] = {}
+
+
+def _register_operational_api_routes() -> None:
+    global OPS_API_ENDPOINTS
+    OPS_API_ENDPOINTS = {}
+    if not OpsApiService.ops_api_enabled():
+        return
+
+    def ops_health(api_token: str = "") -> dict:
+        ok, message = OpsApiService.validate_access(api_token)
+        if not ok:
+            return {"ok": False, "error": message}
+        payload = OpsApiService.health_snapshot()
+        payload["ok"] = True
+        return payload
+
+    def ops_alarms(
+        window_minutes: int | None = 60,
+        command_limit: int = 200,
+        snapshot_limit: int = 200,
+        api_token: str = "",
+    ) -> dict:
+        ok, message = OpsApiService.validate_access(api_token)
+        if not ok:
+            return {"ok": False, "error": message}
+        payload = OpsApiService.alarms_snapshot(
+            window_minutes=window_minutes,
+            command_limit=command_limit,
+            snapshot_limit=snapshot_limit,
+        )
+        payload["ok"] = True
+        return payload
+
+    def ops_alarm_history(
+        limit: int = 50,
+        action_filter: str = "all",
+        actor_contains: str = "",
+        key_contains: str = "",
+        api_token: str = "",
+    ) -> dict:
+        ok, message = OpsApiService.validate_access(api_token)
+        if not ok:
+            return {"ok": False, "error": message}
+        payload = OpsApiService.alarm_history_snapshot(
+            limit=limit,
+            action_filter=action_filter,
+            actor_contains=actor_contains,
+            key_contains=key_contains,
+        )
+        payload["ok"] = True
+        return payload
+
+    def ops_audit_export(
+        file_path: str = "",
+        command_limit: int = 200,
+        snapshot_limit: int = 200,
+        api_token: str = "",
+    ) -> dict:
+        ok, message = OpsApiService.validate_access(api_token)
+        if not ok:
+            return {"ok": False, "error": message}
+        payload = OpsApiService.audit_export_snapshot(
+            file_path=file_path,
+            command_limit=command_limit,
+            snapshot_limit=snapshot_limit,
+        )
+        payload["ok"] = True
+        return payload
+
+    OPS_API_ENDPOINTS = {
+        "/api/ops/health": ops_health,
+        "/api/ops/alarms": ops_alarms,
+        "/api/ops/alarm-history": ops_alarm_history,
+        "/api/ops/audit-export": ops_audit_export,
+    }
+
+    api = getattr(app, "api", None) or getattr(app, "_api", None)
+    if api is None:
+        return
+    if hasattr(api, "add_api_route"):
+        for path, endpoint in OPS_API_ENDPOINTS.items():
+            api.add_api_route(path=path, endpoint=endpoint, methods=["GET"])
+
+
+_register_operational_api_routes()

@@ -24,6 +24,11 @@ def _parse_positive_int(env_name: str, default: int) -> int:
     return parsed
 
 
+def _bool_env(env_name: str, default: bool) -> bool:
+    raw = os.getenv(env_name, "true" if default else "false").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _has_any_secret(*env_names: str) -> bool:
     for env_name in env_names:
         if os.getenv(env_name, "").strip():
@@ -76,6 +81,20 @@ def validate_runtime_configuration() -> list[str]:
             errors.append("OPENSIGNAL_ADMIN_PASSWORD must be at least 12 chars when using plaintext values.")
         if _plain_secret_too_short("OPENSIGNAL_ADMIN_RECOVERY_KEY"):
             errors.append("OPENSIGNAL_ADMIN_RECOVERY_KEY must be at least 12 chars when using plaintext values.")
+
+        ops_api_enabled = _bool_env("OPENSIGNAL_OPS_API_ENABLED", True)
+        allow_unauth = _bool_env("OPENSIGNAL_OPS_API_ALLOW_UNAUTHENTICATED", False)
+        if ops_api_enabled:
+            has_token = _has_any_secret(
+                "OPENSIGNAL_OPS_API_TOKEN",
+                "OPENSIGNAL_OPS_API_TOKEN_HASH",
+                "OPENSIGNAL_OPS_API_TOKEN_HASHES",
+            )
+            if not has_token and not allow_unauth:
+                errors.append(
+                    "Unsafe ops API exposure: configure OPENSIGNAL_OPS_API_TOKEN* "
+                    "or set OPENSIGNAL_OPS_API_ENABLED=false in production-like environments."
+                )
 
     for env_name, default in (
         ("OPENSIGNAL_COMMAND_RETENTION_DAYS", 90),
