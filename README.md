@@ -23,3 +23,4 @@ Open `http://localhost:3000`.
 For full instructions and troubleshooting, see:
 
 - [docs/ubuntu-development-setup.md](docs/ubuntu-development-setup.md)
+- [docs/operations-runbook.md](docs/operations-runbook.md)

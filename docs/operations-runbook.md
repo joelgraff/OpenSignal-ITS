@@ -1,0 +1,109 @@
+# OpenSignal ITS Operations Runbook
+
+This runbook records operational requirements that must be preserved across releases and handoffs.
+
+## Safety-Critical Runtime Controls
+
+1. Commands are denied unless an operator is authenticated.
+2. Write mode is denied unless explicitly unlocked.
+3. Write commands require per-command confirmation token entry.
+4. Probe mode is the default-safe control mode.
+
+## Required Environment Variables
+
+Production-like modes are defined as `OPENSIGNAL_ENV` in: `prod`, `production`, `staging`, `pilot`.
+
+### Required in production-like modes
+
+- `OPENSIGNAL_OPERATOR_PASSWORD`: Operator login password.
+- `OPENSIGNAL_OPERATOR_KEY`: Write-mode unlock key.
+
+### Optional with defaults
+
+- `OPENSIGNAL_OPERATOR_USERNAME`: Defaults to `operator`.
+- `OPENSIGNAL_COMMAND_RETENTION_DAYS`: Defaults to `90`.
+- `OPENSIGNAL_SNAPSHOT_RETENTION_DAYS`: Defaults to `30`.
+- `OPENSIGNAL_APPLY_RETENTION_ON_START`: Defaults to `true`.
+- `OPENSIGNAL_DB_PATH`: Defaults to `traffic.db`.
+- `OPENSIGNAL_MAX_LOGIN_ATTEMPTS`: Defaults to `5`.
+- `OPENSIGNAL_LOGIN_LOCKOUT_SECONDS`: Defaults to `300`.
+- `OPENSIGNAL_ENABLE_RETENTION_SCHEDULER`: Defaults to `false`.
+- `OPENSIGNAL_RETENTION_SCHEDULE_SECONDS`: Defaults to `3600` (minimum `300`).
+
+## Startup Preflight Behavior
+
+At application startup, preflight checks validate runtime configuration.
+
+1. In production-like mode, required secrets must be present.
+2. Retention window variables must be positive integers.
+3. If enabled, retention cleanup is executed on startup.
+
+If preflight fails, startup is blocked.
+
+## Command Audit and Snapshot Logging
+
+Audit data is persisted in SQLite (`traffic.db` by default):
+
+- `command_audit` table: command attempt/result records.
+- `status_snapshots` table: periodic and command-result snapshots.
+
+Both tables support correlation via `correlation_id`.
+
+## Retention Operations
+
+Retention can be applied in two ways:
+
+1. Automatically at startup (`OPENSIGNAL_APPLY_RETENTION_ON_START=true`).
+2. Manually from the dashboard maintenance action.
+3. Periodically with optional scheduler (`OPENSIGNAL_ENABLE_RETENTION_SCHEDULER=true`).
+
+Retention windows:
+
+- Commands: `OPENSIGNAL_COMMAND_RETENTION_DAYS`
+- Snapshots: `OPENSIGNAL_SNAPSHOT_RETENTION_DAYS`
+
+### Runtime Health Panel
+
+Use the dashboard maintenance panel to validate runtime retention state:
+
+1. Click **Refresh Runtime Health** to pull live scheduler + cleanup status.
+2. Confirm scheduler enabled/running state and configured interval.
+3. Verify the latest retention cleanup timestamp and outcome message.
+
+## Operator Workflow (Write Commands)
+
+1. Login as operator.
+2. Unlock write mode with valid operator key.
+3. Initiate command.
+4. Enter generated confirmation token before expiry.
+5. Confirm and execute.
+
+If any step fails, command execution is denied and denial is audited.
+
+## Login Lockout Policy
+
+1. Failed operator logins are counted.
+2. After `OPENSIGNAL_MAX_LOGIN_ATTEMPTS`, login is temporarily locked.
+3. Lockout duration is `OPENSIGNAL_LOGIN_LOCKOUT_SECONDS`.
+4. Successful login resets failure counters and lockout state.
+
+## Regression Test Baseline
+
+Run:
+
+```bash
+.venv/bin/python -m unittest discover -s opensignal_its/tests -p 'test_*.py'
+```
+
+Current baseline includes:
+
+1. Operator authentication service tests.
+2. Command safety policy tests.
+3. Audit persistence and retention tests.
+4. Startup preflight tests.
+
+## Known Operational Constraints
+
+1. Authentication is single-operator credential based (no multi-role RBAC yet).
+2. Audit retention uses simple day-based cleanup in SQLite.
+3. Command OIDs remain controller/vendor dependent and must be validated before production writes.

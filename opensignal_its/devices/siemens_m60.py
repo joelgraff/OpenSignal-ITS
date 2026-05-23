@@ -1,22 +1,13 @@
 # siemens_m60.py - Siemens M60 ATC device handler with SNMP and Telnet support.
 
-from pysnmp.hlapi.asyncio import (
-    CommunityData,
-    ContextData,
-    Integer32,
-    ObjectIdentity,
-    ObjectType,
-    SnmpEngine,
-    UdpTransportTarget,
-    get_cmd,
-    set_cmd,
-)
+from pysnmp.hlapi.asyncio import UdpTransportTarget
 from typing import Dict, Any
 import logging
 import json
 from pathlib import Path
 from .base import Device
 from ..models.device import DeviceStatus, DeviceConfig
+from ..protocols.snmp import SNMPClient
 
 
 logger = logging.getLogger(__name__)
@@ -89,29 +80,26 @@ class SiemensM60(Device):
 
     def __init__(self, config: DeviceConfig):
         super().__init__(config)
-        self._snmp_engine = SnmpEngine()
+        self._snmp = SNMPClient(config)
         self._mp_model = 0  # SNMPv1 is known-good for this controller.
 
     async def _safe_get_oid(self, target: UdpTransportTarget, oid: str) -> str | None:
         """Read one OID and return value as string or None on timeout/noSuchName."""
         try:
-            iterator = get_cmd(
-                self._snmp_engine,
-                CommunityData(self.config.community, mpModel=self._mp_model),
-                target,
-                ContextData(),
-                ObjectType(ObjectIdentity(oid)),
+            value, error = await self._snmp.get_oid(
+                oid=oid,
+                mp_model=self._mp_model,
+                target=target,
             )
-            error_indication, error_status, _, var_binds = await iterator
-            if error_indication or error_status:
+            if error:
                 logger.warning(
                     "SiemensM60 GET failed ip=%s oid=%s error=%s",
                     self.config.ip_address,
                     oid,
-                    str(error_indication or error_status),
+                    error,
                 )
                 return None
-            return str(var_binds[0][1])
+            return value
         except Exception:
             logger.exception(
                 "SiemensM60 GET exception ip=%s oid=%s",
@@ -216,11 +204,7 @@ class SiemensM60(Device):
         """Test connectivity via SNMP."""
         try:
             self.status.errors = []
-            target = await UdpTransportTarget.create(
-                (self.config.ip_address, self.config.port),
-                timeout=self.config.timeout_seconds,
-                retries=self.config.retries,
-            )
+            target = await self._snmp.create_target()
             sys_descr = await self._safe_get_oid(target, OID_SYS_DESCR)
             current_pattern = await self._safe_get_oid(target, OID_CURRENT_PATTERN)
 
@@ -248,11 +232,7 @@ class SiemensM60(Device):
         """Poll known-good OIDs and return structured status for UI."""
         try:
             self.status.errors = []
-            target = await UdpTransportTarget.create(
-                (self.config.ip_address, self.config.port),
-                timeout=self.config.timeout_seconds,
-                retries=self.config.retries,
-            )
+            target = await self._snmp.create_target()
 
             sys_descr = await self._safe_get_oid(target, OID_SYS_DESCR)
             current_pattern_raw = await self._safe_get_oid(target, OID_CURRENT_PATTERN)
@@ -538,18 +518,20 @@ class SiemensM60(Device):
 
     async def _probe_command_target(self, oid: str, label: str) -> bool:
         """Safely validate command target OID existence with GET only (no writes)."""
-        target = await UdpTransportTarget.create(
-            (self.config.ip_address, self.config.port),
-            timeout=self.config.timeout_seconds,
-            retries=self.config.retries,
+        target = await self._snmp.create_target()
+        result = await self._snmp.probe_oid(
+            oid=oid,
+            mp_model=self._mp_model,
+            target=target,
         )
-        current_value = await self._safe_get_oid(target, oid)
-        probe_ok = current_value is not None
+        probe_ok = bool(result["exists"])
+        current_value = result["value"]
         self.status.raw_data["last_command_probe"] = {
             "label": label,
             "oid": oid,
             "exists": probe_ok,
             "current_value": current_value,
+            "error": result.get("error"),
         }
         if probe_ok:
             self.status.status_text = f"Probe OK for {oid}"
@@ -567,28 +549,22 @@ class SiemensM60(Device):
                 oid,
                 value,
             )
-            target = await UdpTransportTarget.create(
-                (self.config.ip_address, self.config.port),
-                timeout=self.config.timeout_seconds,
-                retries=self.config.retries,
+            target = await self._snmp.create_target()
+            success, error = await self._snmp.set_int(
+                oid=oid,
+                value=value,
+                mp_model=self._mp_model,
+                target=target,
             )
-            iterator = set_cmd(
-                self._snmp_engine,
-                CommunityData(self.config.community, mpModel=self._mp_model),
-                target,
-                ContextData(),
-                ObjectType(ObjectIdentity(oid), Integer32(int(value))),
-            )
-            error_indication, error_status, _, _ = await iterator
-            if error_indication or error_status:
+            if not success:
                 logger.warning(
                     "SiemensM60 SET failed ip=%s oid=%s value=%s error=%s",
                     self.config.ip_address,
                     oid,
                     value,
-                    str(error_indication or error_status),
+                    error,
                 )
-                self.status.errors.append(str(error_indication or error_status))
+                self.status.errors.append(str(error))
                 return False
             logger.info(
                 "SiemensM60 SET success ip=%s oid=%s value=%s",

@@ -12,17 +12,20 @@ OpenSignal ITS is a Python-first traffic controller management platform built wi
 - states/: Reflex state classes (planned migration from app module).
 - db/: Persistence layer (planned, SQLite first).
 
-## Current Reality (2026-05-21)
-- Implemented now: models/, devices/, components/, single-state orchestration in opensignal_its.py.
-- Not implemented yet: protocols/, services/, db/, tests/.
+## Current Reality (2026-05-23)
+- Implemented now: models/, devices/, protocols/, services/, db/, tests/, and state orchestration in opensignal_its/states/traffic_state.py.
 - Siemens M60 connectivity behavior: SNMP v1 succeeds on current controller target; SNMP v2c times out.
 - SNMP command wiring exists (SET path implemented), but OIDs are provisional and must be validated against Siemens/NTCIP docs before production use.
+- Operational command safety is implemented with operator authentication, write unlock windows, and per-command confirmation tokens.
+- Command/snapshot persistence is implemented in SQLite with correlation IDs and startup retention enforcement.
 
 ## Operational Rules
 - Use allowlisted command names and documented OIDs only.
 - Log every command attempt and result.
 - Prefer async methods and typed interfaces.
 - Keep UI thin; business logic should move into states/services.
+- In production-like environments, enforce preflight-required secrets and fail startup on invalid runtime configuration.
+- Maintain and follow docs/operations-runbook.md for operational procedures and environment requirements.
 
 ## Immediate Development Focus
 1. Stabilize state updates and dashboard telemetry.

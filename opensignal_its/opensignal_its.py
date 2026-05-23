@@ -1,7 +1,12 @@
 import reflex as rx
 
 from .components.device_card import timing_panel
+from .services import bootstrap_runtime_safety, start_retention_scheduler
 from .states.traffic_state import TrafficState
+
+
+bootstrap_runtime_safety()
+start_retention_scheduler()
 
 
 # Example page
@@ -159,12 +164,24 @@ def dashboard():
                         color_scheme=rx.cond(TrafficState.safe_command_probe, "amber", "red"),
                     ),
                     rx.badge(
+                        rx.cond(TrafficState.write_mode_active, "WRITE UNLOCKED", "WRITE LOCKED"),
+                        color_scheme=rx.cond(TrafficState.write_mode_active, "red", "gray"),
+                    ),
+                    rx.badge(
                         rx.cond(TrafficState.auto_refresh_running, "AUTO REFRESH ON", "AUTO REFRESH OFF"),
                         color_scheme=rx.cond(TrafficState.auto_refresh_running, "green", "gray"),
                     ),
                     rx.badge(
                         rx.cond(TrafficState.auto_reconnect_enabled, "AUTO RECONNECT ON", "AUTO RECONNECT OFF"),
                         color_scheme=rx.cond(TrafficState.auto_reconnect_enabled, "green", "gray"),
+                    ),
+                    rx.badge(
+                        rx.cond(
+                            TrafficState.retention_scheduler_running,
+                            "RETENTION SCHEDULER ON",
+                            "RETENTION SCHEDULER OFF",
+                        ),
+                        color_scheme=rx.cond(TrafficState.retention_scheduler_running, "green", "gray"),
                     ),
                     rx.text(f"SNMP {TrafficState.active_snmp_version}"),
                     rx.text(f"Updated: {TrafficState.last_updated}"),
@@ -249,6 +266,131 @@ def dashboard():
                         spacing="2",
                         align="center",
                         width="100%",
+                    ),
+                    rx.heading("Operator Access", size="3"),
+                    rx.input(
+                        value=TrafficState.login_username_input,
+                        on_change=TrafficState.update_login_username_input,
+                        placeholder="Operator username",
+                        width="100%",
+                    ),
+                    rx.input(
+                        value=TrafficState.login_password_input,
+                        on_change=TrafficState.update_login_password_input,
+                        placeholder="Operator password",
+                        type="password",
+                        width="100%",
+                    ),
+                    rx.hstack(
+                        rx.button(
+                            "Login Operator",
+                            on_click=TrafficState.login_operator,
+                            size="2",
+                            color_scheme="green",
+                        ),
+                        rx.button(
+                            "Logout Operator",
+                            on_click=TrafficState.logout_operator,
+                            size="2",
+                            variant="outline",
+                        ),
+                        width="100%",
+                        spacing="2",
+                        align="center",
+                    ),
+                    rx.text(TrafficState.auth_notice, size="2", color="gray"),
+                    rx.heading("Command Safety", size="3"),
+                    rx.input(
+                        value=TrafficState.operator_key_input,
+                        on_change=TrafficState.update_operator_key_input,
+                        placeholder="Operator key",
+                        type="password",
+                        width="100%",
+                    ),
+                    rx.hstack(
+                        rx.input(
+                            value=TrafficState.write_unlock_seconds_text,
+                            on_change=TrafficState.update_write_unlock_seconds_text,
+                            placeholder="Unlock sec",
+                            width="8em",
+                        ),
+                        rx.button(
+                            "Unlock Write Mode",
+                            on_click=TrafficState.unlock_write_mode,
+                            size="2",
+                            color_scheme="red",
+                        ),
+                        rx.button(
+                            "Lock Write Mode",
+                            on_click=TrafficState.lock_write_mode,
+                            size="2",
+                            variant="outline",
+                        ),
+                        width="100%",
+                        spacing="2",
+                        align="center",
+                    ),
+                    rx.text(TrafficState.safety_notice, size="2", color="gray"),
+                    rx.heading("Write Confirmation", size="3"),
+                    rx.input(
+                        value=TrafficState.confirmation_input,
+                        on_change=TrafficState.update_confirmation_input,
+                        placeholder="Confirmation token",
+                        width="100%",
+                    ),
+                    rx.button(
+                        "Confirm Pending Command",
+                        on_click=TrafficState.confirm_pending_command,
+                        size="2",
+                        variant="outline",
+                        width="100%",
+                    ),
+                    rx.cond(
+                        TrafficState.pending_confirmation_notice != "",
+                        rx.text(TrafficState.pending_confirmation_notice, size="2", color="gray"),
+                        rx.fragment(),
+                    ),
+                    rx.heading("Maintenance", size="3"),
+                    rx.button(
+                        "Refresh Runtime Health",
+                        on_click=TrafficState.refresh_runtime_health,
+                        size="2",
+                        variant="outline",
+                        width="100%",
+                    ),
+                    rx.text(TrafficState.runtime_health_notice, size="2", color="gray"),
+                    rx.button(
+                        "Run Retention Cleanup",
+                        on_click=TrafficState.run_retention_cleanup,
+                        size="2",
+                        variant="outline",
+                        width="100%",
+                    ),
+                    rx.text(
+                        f"Scheduler enabled: {TrafficState.retention_scheduler_enabled} | "
+                        f"running: {TrafficState.retention_scheduler_running} | "
+                        f"interval: {TrafficState.retention_scheduler_interval_text}s",
+                        size="1",
+                        color="gray",
+                    ),
+                    rx.cond(
+                        TrafficState.last_retention_cleanup_at != "",
+                        rx.text(
+                            f"Last cleanup: {TrafficState.last_retention_cleanup_at}",
+                            size="1",
+                            color="gray",
+                        ),
+                        rx.fragment(),
+                    ),
+                    rx.cond(
+                        TrafficState.retention_scheduler_error != "",
+                        rx.text(TrafficState.retention_scheduler_error, size="1", color="tomato"),
+                        rx.fragment(),
+                    ),
+                    rx.cond(
+                        TrafficState.maintenance_notice != "",
+                        rx.text(TrafficState.maintenance_notice, size="2", color="gray"),
+                        rx.fragment(),
                     ),
                     spacing="3",
                     width="100%",

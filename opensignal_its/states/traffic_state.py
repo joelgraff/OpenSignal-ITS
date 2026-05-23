@@ -1,12 +1,23 @@
 import asyncio
 import json
+import os
+import random
 from datetime import datetime
 from typing import Any
+from uuid import uuid4
 
 import reflex as rx
 
-from ..devices.siemens_m60 import SiemensM60
+from ..db import CommandAuditRecord, STORE
 from ..models.device import DeviceConfig
+from ..services import (
+    CommandSafetyService,
+    CommandService,
+    MaintenanceService,
+    OperatorAuthService,
+    PollingService,
+    scheduler_status,
+)
 
 
 class TrafficState(rx.State):
@@ -47,7 +58,33 @@ class TrafficState(rx.State):
     snmp_version: str = "auto"
     timeout_text: str = "3"
     retries_text: str = "1"
+    login_username_input: str = ""
+    login_password_input: str = ""
+    is_authenticated: bool = False
+    current_operator: str = ""
+    auth_notice: str = "Operator not authenticated."
+    failed_login_attempts: int = 0
+    login_lockout_until: str = ""
     safe_command_probe: bool = True
+    operator_key_input: str = ""
+    write_unlock_seconds_text: str = "120"
+    write_unlock_until: str = ""
+    write_mode_active: bool = False
+    safety_notice: str = "Write mode locked."
+    confirmation_input: str = ""
+    pending_confirmation_token: str = ""
+    pending_confirmation_expires: str = ""
+    pending_command_type: str = ""
+    pending_command_value_json: str = ""
+    pending_confirmation_notice: str = ""
+    maintenance_notice: str = ""
+    runtime_health_notice: str = "Runtime health not refreshed yet."
+    retention_scheduler_enabled: bool = False
+    retention_scheduler_running: bool = False
+    retention_scheduler_interval_text: str = "unknown"
+    retention_scheduler_error: str = ""
+    last_retention_cleanup_at: str = ""
+    last_retention_cleanup_result: str = "No retention cleanup run yet."
     auto_refresh_enabled: bool = True
     refresh_interval_text: str = "5"
     auto_reconnect_enabled: bool = True
@@ -74,6 +111,25 @@ class TrafficState(rx.State):
 
     def update_safe_command_probe(self, value: bool):
         self.safe_command_probe = value
+        if value:
+            self.write_mode_active = False
+            self.write_unlock_until = ""
+            self.safety_notice = "Probe mode enabled. Write mode locked."
+
+    def update_operator_key_input(self, value: str):
+        self.operator_key_input = value
+
+    def update_login_username_input(self, value: str):
+        self.login_username_input = value
+
+    def update_login_password_input(self, value: str):
+        self.login_password_input = value
+
+    def update_write_unlock_seconds_text(self, value: str):
+        self.write_unlock_seconds_text = value
+
+    def update_confirmation_input(self, value: str):
+        self.confirmation_input = value
 
     def update_auto_refresh_enabled(self, value: bool):
         self.auto_refresh_enabled = value
@@ -98,6 +154,69 @@ class TrafficState(rx.State):
             return max(2.0, float(self.reconnect_interval_text))
         except ValueError:
             return 10.0
+
+    def _write_unlock_seconds(self) -> int:
+        try:
+            return max(15, int(self.write_unlock_seconds_text))
+        except ValueError:
+            return 120
+
+    @staticmethod
+    def _max_login_attempts() -> int:
+        try:
+            return max(1, int(os.getenv("OPENSIGNAL_MAX_LOGIN_ATTEMPTS", "5")))
+        except ValueError:
+            return 5
+
+    @staticmethod
+    def _login_lockout_seconds() -> int:
+        try:
+            return max(10, int(os.getenv("OPENSIGNAL_LOGIN_LOCKOUT_SECONDS", "300")))
+        except ValueError:
+            return 300
+
+    def _actor_name(self) -> str:
+        return self.current_operator if self.current_operator else "anonymous"
+
+    def _is_login_locked(self) -> bool:
+        if not self.login_lockout_until:
+            return False
+        return not self._has_expired(self.login_lockout_until)
+
+    @staticmethod
+    def _utc_now_iso() -> str:
+        return datetime.utcnow().isoformat()
+
+    def _has_expired(self, ts: str) -> bool:
+        parsed = self._parse_timestamp(ts)
+        now = datetime.utcnow()
+        if parsed is None:
+            return True
+        # _parse_timestamp may return timezone-aware dt if offset is included.
+        if parsed.tzinfo is not None:
+            return now.replace(tzinfo=parsed.tzinfo) >= parsed
+        return now >= parsed
+
+    def _requires_confirmation(self, cmd_type: str) -> bool:
+        if self.safe_command_probe:
+            return False
+        return cmd_type in {
+            "select_pattern",
+            "set_mode",
+            "manual_hold",
+            "advance_phase",
+        }
+
+    def _start_command_confirmation(self, cmd_type: str, value: Any):
+        token = str(random.randint(100000, 999999))
+        expires = datetime.utcnow().timestamp() + 90
+        self.pending_confirmation_token = token
+        self.pending_confirmation_expires = datetime.utcfromtimestamp(expires).isoformat()
+        self.pending_command_type = cmd_type
+        self.pending_command_value_json = json.dumps(value)
+        self.pending_confirmation_notice = (
+            f"Confirmation required for {cmd_type}. Enter token {token} within 90 seconds."
+        )
 
     def _build_config(self) -> DeviceConfig:
         port = int(self.port_text)
@@ -394,14 +513,7 @@ class TrafficState(rx.State):
     async def _collect_status_snapshot(self) -> tuple[dict, int]:
         """Fetch one controller status snapshot without mutating UI state."""
         config = self._build_config()
-        device = SiemensM60(config)
-        success = await device.connect()
-        if success:
-            status_payload = (await device.poll()).model_dump(mode="json")
-        else:
-            status_payload = device.status.model_dump(mode="json")
-        mp_model = getattr(device, "_mp_model", 1)
-        return status_payload, mp_model
+        return await PollingService.collect_siemens_m60_snapshot(config)
 
     def _apply_status_snapshot(self, status_payload: dict, mp_model: int):
         """Apply one status snapshot to state fields used by the UI."""
@@ -416,6 +528,198 @@ class TrafficState(rx.State):
         self.active_snmp_version = "v2c" if mp_model == 1 else "v1"
         errors = self.m60_status.get("errors", [])
         self.error = "; ".join(errors) if errors else ""
+        self._safe_log_status_snapshot(status_payload)
+
+    def _safe_log_status_snapshot(
+        self,
+        payload: dict,
+        correlation_id: str = "",
+        source: str = "poll",
+    ):
+        try:
+            STORE.log_status_snapshot(
+                device_ip=self.ip_address.strip(),
+                payload=payload,
+                correlation_id=correlation_id,
+                source=source,
+            )
+        except Exception:
+            # Logging should not block polling/control flows.
+            pass
+
+    def _safe_log_command(
+        self,
+        cmd_type: str,
+        value: Any,
+        correlation_id: str,
+        allowed: bool,
+        success: bool,
+        error: str,
+    ):
+        try:
+            STORE.log_command(
+                CommandAuditRecord(
+                    timestamp=datetime.utcnow().isoformat(),
+                    correlation_id=correlation_id,
+                    device_ip=self.ip_address.strip(),
+                    command_type=cmd_type,
+                    command_value=value,
+                    probe_only=self.safe_command_probe,
+                    allowed=allowed,
+                    success=success,
+                    error=error,
+                    actor=self._actor_name(),
+                )
+            )
+        except Exception:
+            # Logging should not block command execution paths.
+            pass
+
+    def unlock_write_mode(self):
+        if not self.is_authenticated:
+            self.safety_notice = "Write unlock denied: operator authentication required."
+            self.error = self.safety_notice
+            return
+
+        success, message, unlock_until = CommandSafetyService.unlock_write_mode(
+            operator_key_input=self.operator_key_input,
+            requested_seconds=self._write_unlock_seconds(),
+        )
+        if success:
+            self.safe_command_probe = False
+            self.write_mode_active = True
+            self.write_unlock_until = unlock_until
+        else:
+            self.safe_command_probe = True
+            self.write_mode_active = False
+            self.write_unlock_until = ""
+        self.safety_notice = message
+        self.error = "" if success else message
+
+    def lock_write_mode(self):
+        self.safe_command_probe = True
+        self.write_mode_active = False
+        self.write_unlock_until = ""
+        self.safety_notice = "Write mode locked."
+
+    def login_operator(self):
+        if self._is_login_locked():
+            self.is_authenticated = False
+            self.current_operator = ""
+            self.auth_notice = "Operator login temporarily locked due to repeated failures."
+            self.error = self.auth_notice
+            self.login_password_input = ""
+            return
+
+        success, message = OperatorAuthService.authenticate(
+            username=self.login_username_input,
+            password=self.login_password_input,
+        )
+        self.is_authenticated = success
+        if success:
+            self.current_operator = self.login_username_input.strip()
+            self.auth_notice = f"Authenticated as {self.current_operator}."
+            self.error = ""
+            self.failed_login_attempts = 0
+            self.login_lockout_until = ""
+        else:
+            self.current_operator = ""
+            self.failed_login_attempts += 1
+            if self.failed_login_attempts >= self._max_login_attempts():
+                lockout_seconds = self._login_lockout_seconds()
+                until = datetime.utcnow().timestamp() + lockout_seconds
+                self.login_lockout_until = datetime.utcfromtimestamp(until).isoformat()
+                self.auth_notice = (
+                    "Operator login temporarily locked due to repeated failures."
+                )
+                self.error = self.auth_notice
+            else:
+                self.auth_notice = message
+                self.error = message
+            self.lock_write_mode()
+        self.login_password_input = ""
+
+    def logout_operator(self):
+        self.is_authenticated = False
+        self.current_operator = ""
+        self.auth_notice = "Operator not authenticated."
+        self.login_password_input = ""
+        self.operator_key_input = ""
+        self.lock_write_mode()
+
+    def run_retention_cleanup(self):
+        if not self.is_authenticated:
+            self.maintenance_notice = "Retention cleanup denied: operator authentication required."
+            self.error = self.maintenance_notice
+            return
+        try:
+            deleted_commands, deleted_snapshots = MaintenanceService.run_retention_cleanup()
+            self.maintenance_notice = (
+                f"Retention cleanup complete. Commands deleted: {deleted_commands}, "
+                f"snapshots deleted: {deleted_snapshots}."
+            )
+            self.error = ""
+        except Exception as exc:
+            self.maintenance_notice = f"Retention cleanup failed: {exc}"
+            self.error = self.maintenance_notice
+        self.refresh_runtime_health()
+
+    def refresh_runtime_health(self):
+        sched = scheduler_status()
+        self.retention_scheduler_enabled = bool(sched.get("enabled", False))
+        self.retention_scheduler_running = bool(sched.get("running", False))
+        interval = sched.get("interval_seconds")
+        self.retention_scheduler_interval_text = str(interval) if interval is not None else "unknown"
+        self.retention_scheduler_error = str(sched.get("error", "") or "")
+
+        cleanup = MaintenanceService.get_cleanup_status()
+        self.last_retention_cleanup_at = str(cleanup.get("last_run_at", ""))
+        self.last_retention_cleanup_result = str(
+            cleanup.get("message", "No retention cleanup run yet.")
+        )
+
+        scheduler_line = (
+            f"Scheduler: {'enabled' if self.retention_scheduler_enabled else 'disabled'}, "
+            f"{'running' if self.retention_scheduler_running else 'stopped'}, "
+            f"interval={self.retention_scheduler_interval_text}s"
+        )
+        if self.retention_scheduler_error:
+            scheduler_line = f"{scheduler_line} ({self.retention_scheduler_error})"
+
+        cleanup_at = self.last_retention_cleanup_at if self.last_retention_cleanup_at else "never"
+        self.runtime_health_notice = (
+            f"{scheduler_line}. Last cleanup: {cleanup_at}. {self.last_retention_cleanup_result}"
+        )
+
+    async def confirm_pending_command(self):
+        if not self.pending_command_type:
+            self.error = "No pending command to confirm."
+            return
+        if self._has_expired(self.pending_confirmation_expires):
+            self.error = "Confirmation token expired."
+            self.pending_confirmation_token = ""
+            self.pending_confirmation_expires = ""
+            self.pending_command_type = ""
+            self.pending_command_value_json = ""
+            self.pending_confirmation_notice = ""
+            return
+        if self.confirmation_input.strip() != self.pending_confirmation_token:
+            self.error = "Confirmation token mismatch."
+            return
+
+        cmd_type = self.pending_command_type
+        value: Any = None
+        if self.pending_command_value_json:
+            value = json.loads(self.pending_command_value_json)
+
+        self.pending_confirmation_token = ""
+        self.pending_confirmation_expires = ""
+        self.pending_command_type = ""
+        self.pending_command_value_json = ""
+        self.pending_confirmation_notice = ""
+        self.confirmation_input = ""
+
+        await self.send_command(cmd_type, value, force_confirmed=True)
 
     async def connect_m60(self):
         await self.add_and_poll_m60()
@@ -530,60 +834,99 @@ class TrafficState(rx.State):
         finally:
             self.is_loading = False
 
-    async def send_command(self, cmd_type: str, value: Any):
+    async def send_command(self, cmd_type: str, value: Any, force_confirmed: bool = False):
         """Send timing-related commands to the controller."""
         self.is_loading = True
+        correlation_id = uuid4().hex
         try:
-            config = self._build_config()
-            device = SiemensM60(config)
-            if not await device.connect():
-                self.m60_status = device.status.model_dump(mode="json")
-                self.m60_status_json = json.dumps(self.m60_status, indent=2)
-                self.error = "Controller connection failed before command"
-                self.is_online = False
+            if not self.is_authenticated:
+                auth_error = "Command denied: operator authentication required."
+                self.error = auth_error
+                self._safe_log_command(
+                    cmd_type=cmd_type,
+                    value=value,
+                    correlation_id=correlation_id,
+                    allowed=False,
+                    success=False,
+                    error=auth_error,
+                )
                 return
 
-            success = False
-            if cmd_type == "select_pattern":
-                success = await device.command(
-                    "select_pattern",
-                    {"pattern": value, "probe_only": self.safe_command_probe},
+            if self._requires_confirmation(cmd_type) and not force_confirmed:
+                self._start_command_confirmation(cmd_type, value)
+                self.error = self.pending_confirmation_notice
+                self._safe_log_command(
+                    cmd_type=cmd_type,
+                    value=value,
+                    correlation_id=correlation_id,
+                    allowed=False,
+                    success=False,
+                    error="Confirmation required before write command execution.",
                 )
-                self.error = "" if success else "Failed to select pattern"
-            elif cmd_type == "set_mode":
-                success = await device.command(
-                    "set_mode",
-                    {"mode": value, "probe_only": self.safe_command_probe},
-                )
-            elif cmd_type == "manual_hold":
-                success = await device.command(
-                    "manual_hold",
-                    {"hold": value, "probe_only": self.safe_command_probe},
-                )
-            elif cmd_type == "advance_phase":
-                success = await device.command(
-                    "advance_phase",
-                    {"probe_only": self.safe_command_probe},
-                )
+                return
 
+            safety = CommandSafetyService.evaluate_command(
+                safe_command_probe=self.safe_command_probe,
+                write_unlock_until=self.write_unlock_until,
+            )
+            self.safety_notice = safety.reason
+            if not safety.allowed:
+                self.safe_command_probe = True
+                self.write_mode_active = False
+                self.write_unlock_until = ""
+                self.error = safety.reason
+                self._safe_log_command(
+                    cmd_type=cmd_type,
+                    value=value,
+                    correlation_id=correlation_id,
+                    allowed=False,
+                    success=False,
+                    error=safety.reason,
+                )
+                return
+
+            config = self._build_config()
+            success, payload, mp_model, error = await CommandService.execute_siemens_m60_command(
+                config=config,
+                cmd_type=cmd_type,
+                value=value,
+                safe_command_probe=self.safe_command_probe,
+            )
+            self._safe_log_command(
+                cmd_type=cmd_type,
+                value=value,
+                correlation_id=correlation_id,
+                allowed=True,
+                success=success,
+                error=error,
+            )
             if success:
-                self.m60_status = (await device.poll()).model_dump(mode="json")
+                self.m60_status = payload
                 self.m60_status_json = json.dumps(self.m60_status, indent=2)
                 self.status_text = str(self.m60_status.get("status_text", "Command applied"))
                 self.is_online = bool(self.m60_status.get("is_online", False))
                 self.last_updated = str(self.m60_status.get("timestamp", ""))
                 self._apply_phase_payload(self.m60_status)
-                self.active_snmp_version = "v2c" if getattr(device, "_mp_model", 1) == 1 else "v1"
+                self.active_snmp_version = "v2c" if mp_model == 1 else "v1"
                 errors = self.m60_status.get("errors", [])
                 self.error = "; ".join(errors) if errors else ""
+                self._safe_log_status_snapshot(
+                    self.m60_status,
+                    correlation_id=correlation_id,
+                    source="command",
+                )
             else:
-                self.error = self.error or f"Command failed: {cmd_type}"
+                self.m60_status = payload
+                self.m60_status_json = json.dumps(self.m60_status, indent=2)
+                self.error = error
+                self.is_online = bool(self.m60_status.get("is_online", False))
         except Exception as e:
             self.error = str(e)
         finally:
             self.is_loading = False
 
     async def connect_and_start_polling(self):
+        self.refresh_runtime_health()
         return await self.connect_m60()
 
     async def select_pattern_1(self):
