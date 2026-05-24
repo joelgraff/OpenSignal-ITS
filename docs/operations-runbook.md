@@ -229,6 +229,14 @@ Current baseline includes:
 4. Startup preflight tests.
 5. Dry Reflex compile smoke coverage via `python -m reflex compile --dry --no-rich`.
 
+For a full runtime boot check beyond compile-only validation, run:
+
+```bash
+.venv/bin/python scripts/reflex_boot_smoke.py --frontend-port 3002 --backend-port 8001
+```
+
+The smoke script starts the full Reflex dev stack, probes the frontend root and backend `/ping` endpoint, and retries the next sequential frontend port if the requested frontend port is already in use.
+
 ## Known Operational Constraints
 
 1. Authentication is single-operator credential based (no multi-role RBAC yet).

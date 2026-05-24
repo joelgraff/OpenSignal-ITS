@@ -28,6 +28,12 @@ To run the local regression baseline:
 
 This suite now includes a dry Reflex compile smoke check so UI compile regressions are caught before a manual `reflex run`.
 
+For a full startup smoke that boots Reflex, probes the frontend and backend, and retries the next sequential frontend port on bind conflicts:
+
+```bash
+.venv/bin/python scripts/reflex_boot_smoke.py --frontend-port 3002 --backend-port 8001
+```
+
 For full instructions and troubleshooting, see:
 
 - [docs/ubuntu-development-setup.md](docs/ubuntu-development-setup.md)

@@ -27,3 +27,6 @@ jobs:
 
       - name: Run regression suite
         run: .venv/bin/python -m unittest discover -s opensignal_its/tests -p 'test_*.py'
+
+      - name: Run full Reflex boot smoke
+        run: .venv/bin/python scripts/reflex_boot_smoke.py --frontend-port 3002 --backend-port 8001

@@ -69,6 +69,12 @@ source .venv/bin/activate
 .venv/bin/reflex run
 ```
 
+5. Optional full boot smoke:
+
+```bash
+.venv/bin/python scripts/reflex_boot_smoke.py --frontend-port 3002 --backend-port 8001
+```
+
 ## Verify your environment
 
 ```bash
