@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ipaddress import ip_address
 import json
 from typing import Any, Awaitable, Callable
 
@@ -18,6 +19,31 @@ class FleetService:
     DEFAULT_DEVICE_TYPE = "siemens_m60"
 
     @staticmethod
+    def _normalize_profile_item(item: dict[str, Any], label: str) -> dict[str, Any]:
+        if not isinstance(item, dict):
+            raise ValueError(f"{label} must be an object.")
+
+        device_id = str(item.get("device_id", "")).strip()
+        ip_address = str(item.get("ip_address", "")).strip()
+        if not device_id:
+            raise ValueError(f"{label} is missing device_id (controller ID).")
+        if not ip_address:
+            raise ValueError(f"{label} is missing ip_address.")
+
+        return {
+            "device_id": device_id,
+            "device_type": str(item.get("device_type", FleetService.DEFAULT_DEVICE_TYPE)).strip()
+            or FleetService.DEFAULT_DEVICE_TYPE,
+            "ip_address": ip_address,
+            "port": int(item.get("port", 161)),
+            "community": str(item.get("community", "public")),
+            "snmp_version": str(item.get("snmp_version", "auto")),
+            "timeout_seconds": float(item.get("timeout_seconds", 3.0)),
+            "retries": int(item.get("retries", 1)),
+            "name": str(item.get("name", device_id)),
+        }
+
+    @staticmethod
     def parse_profiles_json(raw_json: str) -> list[dict[str, Any]]:
         raw = raw_json.strip()
         if not raw:
@@ -28,29 +54,136 @@ class FleetService:
 
         profiles: list[dict[str, Any]] = []
         for idx, item in enumerate(payload, start=1):
-            if not isinstance(item, dict):
-                raise ValueError(f"Controller profile #{idx} must be an object.")
-            device_id = str(item.get("device_id", "")).strip()
-            ip_address = str(item.get("ip_address", "")).strip()
-            if not device_id:
-                raise ValueError(f"Controller profile #{idx} is missing device_id (controller ID).")
-            if not ip_address:
-                raise ValueError(f"Controller profile #{idx} is missing ip_address.")
-            profiles.append(
-                {
-                    "device_id": device_id,
-                    "device_type": str(item.get("device_type", FleetService.DEFAULT_DEVICE_TYPE)).strip()
-                    or FleetService.DEFAULT_DEVICE_TYPE,
-                    "ip_address": ip_address,
-                    "port": int(item.get("port", 161)),
-                    "community": str(item.get("community", "public")),
-                    "snmp_version": str(item.get("snmp_version", "auto")),
-                    "timeout_seconds": float(item.get("timeout_seconds", 3.0)),
-                    "retries": int(item.get("retries", 1)),
-                    "name": str(item.get("name", device_id)),
-                }
-            )
+            profiles.append(FleetService._normalize_profile_item(item, f"Controller profile #{idx}"))
         return profiles
+
+    @staticmethod
+    def normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
+        return FleetService._normalize_profile_item(profile, "Controller profile")
+
+    @staticmethod
+    def build_profile_from_form(
+        *,
+        device_id: str,
+        name: str,
+        device_type: str,
+        ip_address_text: str,
+        port_text: str,
+        community: str,
+        snmp_version: str,
+        timeout_text: str,
+        retries_text: str,
+    ) -> dict[str, Any]:
+        try:
+            port = int(port_text)
+        except ValueError as exc:
+            raise ValueError("Port must be an integer.") from exc
+        if port < 1 or port > 65535:
+            raise ValueError("Port must be between 1 and 65535.")
+
+        try:
+            timeout_seconds = float(timeout_text)
+        except ValueError as exc:
+            raise ValueError("Timeout must be a number.") from exc
+        if timeout_seconds <= 0:
+            raise ValueError("Timeout must be greater than 0.")
+
+        try:
+            retries = int(retries_text)
+        except ValueError as exc:
+            raise ValueError("Retries must be an integer.") from exc
+        if retries < 0:
+            raise ValueError("Retries cannot be negative.")
+
+        raw_ip = ip_address_text.strip()
+        try:
+            normalized_ip = str(ip_address(raw_ip))
+        except ValueError as exc:
+            raise ValueError("IP address must be a valid IPv4 or IPv6 literal.") from exc
+
+        return FleetService.normalize_profile(
+            {
+                "device_id": device_id.strip(),
+                "name": name.strip() or device_id.strip(),
+                "device_type": device_type.strip() or FleetService.DEFAULT_DEVICE_TYPE,
+                "ip_address": normalized_ip,
+                "port": port,
+                "community": community.strip(),
+                "snmp_version": snmp_version.strip(),
+                "timeout_seconds": timeout_seconds,
+                "retries": retries,
+            }
+        )
+
+    @staticmethod
+    def upsert_profile(
+        profiles: list[dict[str, Any]],
+        profile: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        normalized = FleetService.normalize_profile(profile)
+        updated = [dict(existing) for existing in profiles]
+        for idx, existing in enumerate(updated):
+            if str(existing.get("device_id", "")).strip() == normalized["device_id"]:
+                updated[idx] = normalized
+                break
+        else:
+            updated.append(normalized)
+        return updated
+
+    @staticmethod
+    def remove_profile(
+        profiles: list[dict[str, Any]],
+        device_id: str,
+    ) -> list[dict[str, Any]]:
+        target = device_id.strip()
+        return [
+            dict(profile)
+            for profile in profiles
+            if str(profile.get("device_id", "")).strip() != target
+        ]
+
+    @staticmethod
+    def dump_profiles_json(profiles: list[dict[str, Any]]) -> str:
+        normalized = [FleetService.normalize_profile(profile) for profile in profiles]
+        return json.dumps(normalized, indent=2)
+
+    @staticmethod
+    def format_profile_row(profile: dict[str, Any]) -> str:
+        normalized = FleetService.normalize_profile(profile)
+        name = str(normalized.get("name", normalized["device_id"])).strip()
+        name_suffix = "" if name == normalized["device_id"] else f" | {name}"
+        return (
+            f"{normalized['device_id']} | {normalized['ip_address']}"
+            f" | {normalized['device_type']}{name_suffix}"
+        )
+
+    @staticmethod
+    def build_profile_rows(profiles: list[dict[str, Any]]) -> list[str]:
+        return [FleetService.format_profile_row(profile) for profile in profiles]
+
+    @staticmethod
+    def filter_profiles(
+        profiles: list[dict[str, Any]],
+        query: str,
+    ) -> list[dict[str, Any]]:
+        normalized_query = query.strip().lower()
+        if not normalized_query:
+            return [dict(profile) for profile in profiles]
+
+        filtered: list[dict[str, Any]] = []
+        for profile in profiles:
+            normalized = FleetService.normalize_profile(profile)
+            haystack = " ".join(
+                [
+                    normalized["device_id"],
+                    normalized["ip_address"],
+                    normalized["device_type"],
+                    str(normalized.get("name", "")),
+                ]
+            ).lower()
+            if normalized_query in haystack:
+                filtered.append(normalized)
+        return filtered
 
     @staticmethod
     def build_device_config(profile: dict[str, Any]) -> DeviceConfig:

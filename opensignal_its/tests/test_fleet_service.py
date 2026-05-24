@@ -18,6 +18,128 @@ class FleetServiceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             FleetService.parse_profiles_json('{"device_id":"int-1"}')
 
+    def test_upsert_profile_appends_new_profile(self):
+        profiles = [{"device_id": "a", "device_type": "siemens_m60", "ip_address": "10.0.0.1"}]
+
+        updated = FleetService.upsert_profile(
+            profiles,
+            {"device_id": "b", "device_type": "siemens_m60", "ip_address": "10.0.0.2"},
+        )
+
+        self.assertEqual(2, len(updated))
+        self.assertEqual("b", updated[1]["device_id"])
+
+    def test_upsert_profile_replaces_existing_profile(self):
+        profiles = [{"device_id": "a", "device_type": "siemens_m60", "ip_address": "10.0.0.1"}]
+
+        updated = FleetService.upsert_profile(
+            profiles,
+            {
+                "device_id": "a",
+                "device_type": "siemens_m60",
+                "ip_address": "10.0.0.9",
+                "name": "Updated A",
+            },
+        )
+
+        self.assertEqual(1, len(updated))
+        self.assertEqual("10.0.0.9", updated[0]["ip_address"])
+        self.assertEqual("Updated A", updated[0]["name"])
+
+    def test_remove_profile_drops_matching_device_id(self):
+        profiles = [
+            {"device_id": "a", "device_type": "siemens_m60", "ip_address": "10.0.0.1"},
+            {"device_id": "b", "device_type": "siemens_m60", "ip_address": "10.0.0.2"},
+        ]
+
+        updated = FleetService.remove_profile(profiles, "a")
+
+        self.assertEqual(1, len(updated))
+        self.assertEqual("b", updated[0]["device_id"])
+
+    def test_build_profile_rows_formats_compact_summary(self):
+        rows = FleetService.build_profile_rows(
+            [
+                {
+                    "device_id": "int-1",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.1",
+                    "name": "Main & 1st",
+                }
+            ]
+        )
+
+        self.assertEqual(1, len(rows))
+        self.assertIn("int-1 | 10.0.0.1 | siemens_m60", rows[0])
+        self.assertIn("Main & 1st", rows[0])
+
+    def test_filter_profiles_matches_device_id_name_and_ip(self):
+        profiles = [
+            {
+                "device_id": "int-1",
+                "device_type": "siemens_m60",
+                "ip_address": "10.0.0.1",
+                "name": "Main & 1st",
+            },
+            {
+                "device_id": "int-2",
+                "device_type": "siemens_m60",
+                "ip_address": "10.0.0.2",
+                "name": "Broadway",
+            },
+        ]
+
+        self.assertEqual(["int-1"], [p["device_id"] for p in FleetService.filter_profiles(profiles, "main")])
+        self.assertEqual(["int-2"], [p["device_id"] for p in FleetService.filter_profiles(profiles, "10.0.0.2")])
+        self.assertEqual(["int-2"], [p["device_id"] for p in FleetService.filter_profiles(profiles, "int-2")])
+
+    def test_build_profile_from_form_validates_and_normalizes(self):
+        profile = FleetService.build_profile_from_form(
+            device_id="int-1",
+            name="Main & 1st",
+            device_type="siemens_m60",
+            ip_address_text="10.0.0.1",
+            port_text="161",
+            community="public",
+            snmp_version="v1",
+            timeout_text="3.5",
+            retries_text="2",
+        )
+
+        self.assertEqual("int-1", profile["device_id"])
+        self.assertEqual("10.0.0.1", profile["ip_address"])
+        self.assertEqual(161, profile["port"])
+        self.assertEqual(3.5, profile["timeout_seconds"])
+        self.assertEqual(2, profile["retries"])
+
+    def test_build_profile_from_form_rejects_invalid_port(self):
+        with self.assertRaises(ValueError):
+            FleetService.build_profile_from_form(
+                device_id="int-1",
+                name="",
+                device_type="siemens_m60",
+                ip_address_text="10.0.0.1",
+                port_text="70000",
+                community="public",
+                snmp_version="v1",
+                timeout_text="3",
+                retries_text="1",
+            )
+
+    def test_build_profile_from_form_rejects_invalid_ip_address(self):
+        with self.assertRaises(ValueError):
+            FleetService.build_profile_from_form(
+                device_id="int-1",
+                name="",
+                device_type="siemens_m60",
+                ip_address_text="not-an-ip",
+                port_text="161",
+                community="public",
+                snmp_version="v1",
+                timeout_text="3",
+                retries_text="1",
+            )
+
     def test_select_profile_prefers_selected_id(self):
         profiles = [
             {"device_id": "a", "device_type": "siemens_m60", "ip_address": "10.0.0.1"},
