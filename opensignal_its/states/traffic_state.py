@@ -146,6 +146,10 @@ class TrafficState(rx.State):
     alarm_history_actor_filter: str = ""
     alarm_history_key_filter: str = ""
     alarm_history_limit_text: str = "50"
+    alarm_history_applied_action_filter: str = "all"
+    alarm_history_applied_actor_filter: str = ""
+    alarm_history_applied_key_filter: str = ""
+    alarm_history_applied_limit_text: str = "50"
     selected_alarm_key: str = ""
     alarm_note_input: str = ""
     alarm_silence_minutes_text: str = "30"
@@ -1150,6 +1154,10 @@ class TrafficState(rx.State):
                 ]
             )
             self.alarm_history_rows = history_adapted["alarm_history_rows"]
+            self.alarm_history_applied_action_filter = self.alarm_history_action_filter
+            self.alarm_history_applied_actor_filter = self.alarm_history_actor_filter
+            self.alarm_history_applied_key_filter = self.alarm_history_key_filter
+            self.alarm_history_applied_limit_text = str(self._alarm_history_limit())
             self.event_notice = (
                 f"Timeline refreshed ({self.event_window}): {len(self.event_timeline_rows)} entries, "
                 f"{len(self.alarm_rows)} active alarms, "

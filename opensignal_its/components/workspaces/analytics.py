@@ -5,6 +5,90 @@ from .event_rows import alarm_display_row, alarm_history_display_row, timeline_d
 from .section_card import workspace_section_card
 
 
+_DEFAULT_ALARM_HISTORY_LIMIT = "50"
+
+
+def _filter_chip(label: str, color_scheme: str = "gray") -> rx.Component:
+    return rx.badge(label, size="1", variant="soft", color_scheme=color_scheme)
+
+
+def _alarm_history_action_chip() -> rx.Component:
+    return rx.cond(
+        TrafficState.alarm_history_applied_action_filter == "acknowledge",
+        _filter_chip("Action: Ack", "green"),
+        rx.cond(
+            TrafficState.alarm_history_applied_action_filter == "silence",
+            _filter_chip("Action: Silence", "orange"),
+            rx.cond(
+                TrafficState.alarm_history_applied_action_filter == "clear_acknowledgement",
+                _filter_chip("Action: Clear Ack"),
+                rx.cond(
+                    TrafficState.alarm_history_applied_action_filter == "clear_silence",
+                    _filter_chip("Action: Clear Silence"),
+                    _filter_chip(
+                        f"Action: {TrafficState.alarm_history_applied_action_filter}",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+def _alarm_history_filter_summary() -> rx.Component:
+    has_custom_filters = (
+        (TrafficState.alarm_history_applied_action_filter != "all")
+        | (TrafficState.alarm_history_applied_actor_filter != "")
+        | (TrafficState.alarm_history_applied_key_filter != "")
+        | (TrafficState.alarm_history_applied_limit_text != _DEFAULT_ALARM_HISTORY_LIMIT)
+    )
+    return rx.vstack(
+        rx.text("Active filters", size="1", color="gray", font_weight="600"),
+        rx.cond(
+            has_custom_filters,
+            rx.hstack(
+                rx.cond(
+                    TrafficState.alarm_history_applied_action_filter != "all",
+                    _alarm_history_action_chip(),
+                    rx.fragment(),
+                ),
+                rx.cond(
+                    TrafficState.alarm_history_applied_actor_filter != "",
+                    _filter_chip(
+                        f"Actor: {TrafficState.alarm_history_applied_actor_filter}",
+                    ),
+                    rx.fragment(),
+                ),
+                rx.cond(
+                    TrafficState.alarm_history_applied_key_filter != "",
+                    _filter_chip(
+                        f"Key: {TrafficState.alarm_history_applied_key_filter}",
+                    ),
+                    rx.fragment(),
+                ),
+                rx.cond(
+                    TrafficState.alarm_history_applied_limit_text != _DEFAULT_ALARM_HISTORY_LIMIT,
+                    _filter_chip(
+                        f"Limit: {TrafficState.alarm_history_applied_limit_text}",
+                    ),
+                    rx.fragment(),
+                ),
+                width="100%",
+                spacing="2",
+                wrap="wrap",
+            ),
+            rx.hstack(
+                _filter_chip("All actions"),
+                _filter_chip(f"Limit: {TrafficState.alarm_history_applied_limit_text}"),
+                width="100%",
+                spacing="2",
+                wrap="wrap",
+            ),
+        ),
+        spacing="1",
+        width="100%",
+    )
+
+
 def analytics_workspace_section() -> rx.Component:
     return rx.cond(
         TrafficState.ui_workspace_mode == "analytics",
@@ -178,6 +262,7 @@ def analytics_workspace_section() -> rx.Component:
                             wrap="wrap",
                             width="100%",
                         ),
+                        _alarm_history_filter_summary(),
                         rx.box(
                             rx.cond(
                                 TrafficState.alarm_history_rows != [],
