@@ -1,6 +1,7 @@
 import reflex as rx
 
 from ...states.traffic_state import TrafficState
+from .event_rows import alarm_display_row, timeline_display_row
 from .section_card import workspace_section_card
 
 
@@ -73,9 +74,13 @@ def analytics_workspace_section() -> rx.Component:
                         rx.box(
                             rx.cond(
                                 TrafficState.alarm_rows != [],
-                                rx.foreach(
-                                    TrafficState.alarm_rows,
-                                    lambda row: rx.text(row, size="1", color="tomato"),
+                                rx.vstack(
+                                    rx.foreach(
+                                        TrafficState.alarm_rows,
+                                        lambda row: alarm_display_row(row, selectable=True),
+                                    ),
+                                    spacing="2",
+                                    width="100%",
                                 ),
                                 rx.text("No active alarms.", size="1", color="gray"),
                             ),
@@ -85,26 +90,42 @@ def analytics_workspace_section() -> rx.Component:
                         ),
                         rx.cond(
                             TrafficState.acknowledged_alarm_rows != [],
-                            rx.box(
-                                rx.foreach(
-                                    TrafficState.acknowledged_alarm_rows,
-                                    lambda row: rx.text(row, size="1", color="green"),
+                            rx.vstack(
+                                rx.text("Acknowledged", size="1", color="gray", font_weight="600"),
+                                rx.box(
+                                    rx.vstack(
+                                        rx.foreach(
+                                            TrafficState.acknowledged_alarm_rows,
+                                            lambda row: alarm_display_row(row),
+                                        ),
+                                        spacing="2",
+                                        width="100%",
+                                    ),
+                                    max_height="90px",
+                                    overflow_y="auto",
+                                    width="100%",
                                 ),
-                                max_height="90px",
-                                overflow_y="auto",
                                 width="100%",
                             ),
                             rx.fragment(),
                         ),
                         rx.cond(
                             TrafficState.silenced_alarm_rows != [],
-                            rx.box(
-                                rx.foreach(
-                                    TrafficState.silenced_alarm_rows,
-                                    lambda row: rx.text(row, size="1", color="orange"),
+                            rx.vstack(
+                                rx.text("Silenced", size="1", color="gray", font_weight="600"),
+                                rx.box(
+                                    rx.vstack(
+                                        rx.foreach(
+                                            TrafficState.silenced_alarm_rows,
+                                            lambda row: alarm_display_row(row),
+                                        ),
+                                        spacing="2",
+                                        width="100%",
+                                    ),
+                                    max_height="90px",
+                                    overflow_y="auto",
+                                    width="100%",
                                 ),
-                                max_height="90px",
-                                overflow_y="auto",
                                 width="100%",
                             ),
                             rx.fragment(),
@@ -181,9 +202,13 @@ def analytics_workspace_section() -> rx.Component:
                         rx.box(
                             rx.cond(
                                 TrafficState.event_timeline_rows != [],
-                                rx.foreach(
-                                    TrafficState.event_timeline_rows,
-                                    lambda row: rx.text(row, size="1", color="gray"),
+                                rx.vstack(
+                                    rx.foreach(
+                                        TrafficState.event_timeline_rows,
+                                        lambda row: timeline_display_row(row),
+                                    ),
+                                    spacing="2",
+                                    width="100%",
                                 ),
                                 rx.text("No timeline rows.", size="1", color="gray"),
                             ),

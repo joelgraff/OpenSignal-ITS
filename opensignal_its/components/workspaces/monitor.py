@@ -16,6 +16,7 @@ import reflex as rx
 
 from ...components.phase_status import phase_status_grid
 from ...states.traffic_state import TrafficState
+from .event_rows import alarm_display_row, timeline_display_row
 from .page_frame import workspace_page_frame
 from .section_card import workspace_section_card
 
@@ -373,9 +374,13 @@ def _intersection_logs_tab() -> rx.Component:
                 rx.text("Active Alarms", size="1", font_weight="600"),
                 rx.cond(
                     TrafficState.alarm_rows != [],
-                    rx.foreach(
-                        TrafficState.alarm_rows,
-                        lambda row: rx.text(row, size="1", color="tomato"),
+                    rx.vstack(
+                        rx.foreach(
+                            TrafficState.alarm_rows,
+                            lambda row: alarm_display_row(row),
+                        ),
+                        spacing="2",
+                        width="100%",
                     ),
                     rx.text("None.", size="1", color="gray"),
                 ),
@@ -386,9 +391,13 @@ def _intersection_logs_tab() -> rx.Component:
                 rx.box(
                     rx.cond(
                         TrafficState.event_timeline_rows != [],
-                        rx.foreach(
-                            TrafficState.event_timeline_rows,
-                            lambda row: rx.text(row, size="1", color="gray"),
+                        rx.vstack(
+                            rx.foreach(
+                                TrafficState.event_timeline_rows,
+                                lambda row: timeline_display_row(row),
+                            ),
+                            spacing="2",
+                            width="100%",
                         ),
                         rx.text("Empty.", size="1", color="gray"),
                     ),

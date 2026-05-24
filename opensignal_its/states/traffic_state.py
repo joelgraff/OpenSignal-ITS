@@ -11,6 +11,7 @@ import reflex as rx
 from ..devices.parsers import build_siemens_m60_view
 from ..db import CommandAuditRecord, STORE
 from ..models.device import DeviceConfig
+from ..models.event import EventDisplayView
 from ..models.fleet import FleetRefreshView
 from ..services import (
     CommandSafetyService,
@@ -46,6 +47,19 @@ def _fleet_view_to_state_fields(refresh_view: FleetRefreshView) -> dict[str, Any
         "selected_payload": refresh_view.selected_payload,
         "selected_mp_model": int(refresh_view.selected_mp_model),
         "selected_device_type": str(refresh_view.selected_device_type),
+    }
+
+
+def _event_view_to_state_fields(event_view: EventDisplayView) -> dict[str, Any]:
+    return {
+        "event_timeline_rows": [row.model_dump(mode="json") for row in event_view.timeline],
+        "alarm_rows": [row.model_dump(mode="json") for row in event_view.alarms],
+        "acknowledged_alarm_rows": [
+            row.model_dump(mode="json") for row in event_view.acknowledged_alarms
+        ],
+        "silenced_alarm_rows": [
+            row.model_dump(mode="json") for row in event_view.silenced_alarms
+        ],
     }
 
 
@@ -117,10 +131,10 @@ class TrafficState(rx.State):
     runtime_registry_rows: list[str] = []
     event_notice: str = "Timeline feed idle."
     event_window: str = "1h"
-    event_timeline_rows: list[str] = []
-    alarm_rows: list[str] = []
-    acknowledged_alarm_rows: list[str] = []
-    silenced_alarm_rows: list[str] = []
+    event_timeline_rows: list[dict[str, str]] = []
+    alarm_rows: list[dict[str, str]] = []
+    acknowledged_alarm_rows: list[dict[str, str]] = []
+    silenced_alarm_rows: list[dict[str, str]] = []
     alarm_history_rows: list[str] = []
     alarm_history_action_filter: str = "all"
     alarm_history_actor_filter: str = ""
@@ -1112,10 +1126,11 @@ class TrafficState(rx.State):
                 snapshot_limit=200,
                 window_minutes=self._event_window_minutes(),
             )
-            self.event_timeline_rows = list(payload.get("timeline", []))
-            self.alarm_rows = list(payload.get("alarms", []))
-            self.acknowledged_alarm_rows = list(payload.get("acknowledged_alarms", []))
-            self.silenced_alarm_rows = list(payload.get("silenced_alarms", []))
+            adapted = _event_view_to_state_fields(EventService.build_display_view(payload))
+            self.event_timeline_rows = adapted["event_timeline_rows"]
+            self.alarm_rows = adapted["alarm_rows"]
+            self.acknowledged_alarm_rows = adapted["acknowledged_alarm_rows"]
+            self.silenced_alarm_rows = adapted["silenced_alarm_rows"]
             self.alarm_history_rows = EventService.list_alarm_history_rows(
                 limit=self._alarm_history_limit(),
                 action_filter=self.alarm_history_action_filter,

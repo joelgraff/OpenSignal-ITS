@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..db import STORE
+from ..models.event import AlarmDisplayRow, EventDisplayView, TimelineDisplayRow
 
 
 def _parse_iso(ts: str) -> datetime:
@@ -34,6 +35,66 @@ def _alarm_field(alarm_key: str, field: str) -> str:
         if part.startswith(token):
             return part[len(token):].strip().lower()
     return ""
+
+
+def _display_label(value: str, default: str) -> str:
+    cleaned = value.strip().replace("_", " ").replace("-", " ")
+    if not cleaned:
+        return default
+    return cleaned.title()
+
+
+def _status_label(value: str) -> str:
+    normalized = value.strip().upper()
+    if normalized == "OK":
+        return "OK"
+    return _display_label(value, "Unknown")
+
+
+def _status_scheme(value: str, fallback: str = "gray") -> str:
+    normalized = value.strip().lower()
+    if normalized in {"ok", "online"}:
+        return "green"
+    if normalized in {"fail", "offline", "critical"}:
+        return "red"
+    if normalized in {"denied", "high", "silenced"}:
+        return "orange"
+    if normalized in {"warn", "warning", "medium"}:
+        return "amber"
+    if normalized == "acknowledged":
+        return "green"
+    return fallback
+
+
+def _alarm_tokens(alarm_key: str) -> dict[str, str]:
+    tokens: dict[str, str] = {}
+    for part in alarm_key.split():
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        tokens[key.strip().lower()] = value.strip()
+    return tokens
+
+
+def _split_alarm_metadata(row: str) -> tuple[str, str]:
+    base, separator, metadata = row.rpartition(" [")
+    if separator and metadata.endswith("]"):
+        return base.strip(), metadata[:-1].strip()
+    return row.strip(), ""
+
+
+def _extract_trailing_value(text: str, token: str) -> str:
+    _prefix, separator, suffix = text.partition(token)
+    if not separator:
+        return ""
+    return suffix.strip()
+
+
+def _extract_token_value(text: str, token: str) -> str:
+    value = _extract_trailing_value(text, token)
+    if not value:
+        return ""
+    return value.split(" ", 1)[0].strip()
 
 
 class EventService:
@@ -198,6 +259,123 @@ class EventService:
             "acknowledged_alarms": acknowledged_alarms,
             "silenced_alarms": silenced_alarms,
         }
+
+    @staticmethod
+    def build_display_view(payload: dict[str, list[str]]) -> EventDisplayView:
+        return EventDisplayView(
+            timeline=[
+                EventService._build_timeline_display_row(row)
+                for row in payload.get("timeline", [])
+            ],
+            alarms=[
+                EventService._build_alarm_display_row(row, state_label="Active")
+                for row in payload.get("alarms", [])
+            ],
+            acknowledged_alarms=[
+                EventService._build_alarm_display_row(row, state_label="Acknowledged")
+                for row in payload.get("acknowledged_alarms", [])
+            ],
+            silenced_alarms=[
+                EventService._build_alarm_display_row(row, state_label="Silenced")
+                for row in payload.get("silenced_alarms", [])
+            ],
+        )
+
+    @staticmethod
+    def _build_alarm_display_row(row: str, state_label: str) -> AlarmDisplayRow:
+        alarm_key, metadata = _split_alarm_metadata(row)
+        tokens = _alarm_tokens(alarm_key)
+        severity = tokens.get("severity", "unknown")
+        alarm_type = tokens.get("type", "unknown")
+        threshold = tokens.get("threshold", "")
+        detail = f"Threshold {threshold}" if threshold else "Threshold not provided"
+        return AlarmDisplayRow(
+            alarm_key=alarm_key,
+            severity=severity,
+            severity_label=_display_label(severity, "Unknown"),
+            severity_scheme=_status_scheme(severity),
+            alarm_type=alarm_type,
+            summary=_display_label(alarm_type, "Alarm"),
+            device_ip=tokens.get("device", "unknown"),
+            detail=detail,
+            state_label=state_label,
+            state_scheme=_status_scheme(state_label),
+            state_detail=metadata,
+            raw=row,
+        )
+
+    @staticmethod
+    def _build_timeline_display_row(row: str) -> TimelineDisplayRow:
+        raw = row.strip()
+        timestamp = ""
+        remainder = raw
+        if raw.startswith("[") and "] " in raw:
+            timestamp, remainder = raw[1:].split("] ", 1)
+        tokens = remainder.split()
+        kind = tokens[0] if tokens else "event"
+
+        if kind == "CMD":
+            device_ip = tokens[1] if len(tokens) > 1 else "unknown"
+            command_type = tokens[2] if len(tokens) > 2 else "unknown"
+            actor = _extract_token_value(remainder, " actor=")
+            policy = "DENIED" if " DENIED" in remainder else "ALLOWED" if " ALLOWED" in remainder else "UNKNOWN"
+            status = "FAIL" if " FAIL" in remainder else "OK" if " OK" in remainder else "UNKNOWN"
+            error = _extract_trailing_value(remainder, " error=")
+            detail_parts = []
+            if actor:
+                detail_parts.append(f"Actor {actor}")
+            if policy != "UNKNOWN":
+                detail_parts.append(_display_label(policy, "Unknown"))
+            if error:
+                detail_parts.append(f"Error {error}")
+            return TimelineDisplayRow(
+                timestamp=timestamp,
+                kind="command",
+                kind_label="Command",
+                kind_scheme="blue",
+                device_ip=device_ip,
+                summary=_display_label(command_type, "Command"),
+                detail=" | ".join(detail_parts) or "No command detail.",
+                status_label=_status_label(status),
+                status_scheme=_status_scheme(policy if policy == "DENIED" else status),
+                raw=row,
+            )
+
+        if kind == "SNAP":
+            device_ip = tokens[1] if len(tokens) > 1 else "unknown"
+            source = tokens[2] if len(tokens) > 2 else "poll"
+            status = tokens[3] if len(tokens) > 3 else "unknown"
+            status_text = _extract_trailing_value(remainder, " status=")
+            detail_parts = []
+            if source:
+                detail_parts.append(_display_label(source, "Poll"))
+            if status_text:
+                detail_parts.append(status_text)
+            return TimelineDisplayRow(
+                timestamp=timestamp,
+                kind="snapshot",
+                kind_label="Snapshot",
+                kind_scheme="gray",
+                device_ip=device_ip,
+                summary="Status Snapshot",
+                detail=" | ".join(detail_parts) or "No snapshot detail.",
+                status_label=_status_label(status),
+                status_scheme=_status_scheme(status),
+                raw=row,
+            )
+
+        return TimelineDisplayRow(
+            timestamp=timestamp,
+            kind=kind.lower(),
+            kind_label=_display_label(kind, "Event"),
+            kind_scheme="gray",
+            device_ip="unknown",
+            summary="Event",
+            detail=remainder,
+            status_label="Unknown",
+            status_scheme="gray",
+            raw=row,
+        )
 
     @staticmethod
     def acknowledge_alarm(alarm_key: str, actor: str, note: str = "") -> tuple[bool, str]:

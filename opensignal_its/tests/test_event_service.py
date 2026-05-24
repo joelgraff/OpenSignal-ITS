@@ -329,6 +329,55 @@ class EventServiceTests(unittest.TestCase):
         self.assertIn("ALARM_EVENT acknowledge", rows[0])
         self.assertIn("actor=bob:admin", rows[0])
 
+    def test_build_display_view_structures_alarm_and_timeline_rows(self):
+        payload = {
+            "timeline": [
+                (
+                    "[2026-01-01T00:03:00+00:00] CMD 10.0.0.1 set_mode "
+                    "actor=alice:admin ALLOWED FAIL error=failed hard"
+                ),
+                "[2026-01-01T00:04:00+00:00] SNAP 10.0.0.2 poll ONLINE status=Pattern 2 | Unit Free",
+            ],
+            "alarms": [
+                "ALARM severity=critical type=offline-streak device=10.0.0.1 threshold=2"
+            ],
+            "acknowledged_alarms": [
+                (
+                    "ALARM severity=high type=command-failure-streak device=10.0.0.2 threshold=3 "
+                    "[ACK by bob:admin at 2026-01-01T00:10:00+00:00]"
+                )
+            ],
+            "silenced_alarms": [
+                (
+                    "ALARM severity=critical type=offline-streak device=10.0.0.3 threshold=2 "
+                    "[SILENCED by alice:admin until 2026-01-01T00:15:00+00:00]"
+                )
+            ],
+        }
+
+        view = event_service.EventService.build_display_view(payload)
+
+        self.assertEqual("Command", view.timeline[0].kind_label)
+        self.assertEqual("10.0.0.1", view.timeline[0].device_ip)
+        self.assertEqual("Fail", view.timeline[0].status_label)
+        self.assertIn("Actor alice:admin", view.timeline[0].detail)
+        self.assertIn("Error failed hard", view.timeline[0].detail)
+
+        self.assertEqual("Snapshot", view.timeline[1].kind_label)
+        self.assertEqual("Online", view.timeline[1].status_label)
+        self.assertIn("Pattern 2 | Unit Free", view.timeline[1].detail)
+
+        self.assertEqual("Offline Streak", view.alarms[0].summary)
+        self.assertEqual("Critical", view.alarms[0].severity_label)
+        self.assertEqual("Active", view.alarms[0].state_label)
+        self.assertEqual("Threshold 2", view.alarms[0].detail)
+
+        self.assertEqual("Acknowledged", view.acknowledged_alarms[0].state_label)
+        self.assertIn("ACK by bob:admin", view.acknowledged_alarms[0].state_detail)
+
+        self.assertEqual("Silenced", view.silenced_alarms[0].state_label)
+        self.assertIn("SILENCED by alice:admin", view.silenced_alarms[0].state_detail)
+
 
 if __name__ == "__main__":
     unittest.main()
