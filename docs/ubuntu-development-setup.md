@@ -6,6 +6,7 @@ This guide provisions OpenSignal ITS on a clean Ubuntu machine.
 
 - Ubuntu 24.04 LTS (recommended)
 - Python 3.12+
+- Node.js 20+ and npm for optional Playwright browser smoke
 
 ## Fast path (recommended)
 
@@ -44,6 +45,8 @@ sudo apt-get install -y \
   libgl1 \
   libglib2.0-0 \
   libssl-dev \
+  nodejs \
+  npm \
   pkg-config \
   python3 \
   python3-dev \
@@ -75,6 +78,14 @@ source .venv/bin/activate
 
 ```bash
 .venv/bin/python scripts/reflex_boot_smoke.py --frontend-port 3002 --backend-port 8001
+```
+
+6. Optional browser auth/navigation smoke:
+
+```bash
+npm install
+npx playwright install chromium
+.venv/bin/python scripts/reflex_playwright_smoke.py
 ```
 
 ## Verify your environment

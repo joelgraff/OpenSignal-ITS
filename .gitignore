@@ -7,6 +7,9 @@ assets/external/
 __pycache__/
 .venv/
 .env
+node_modules/
 backend.zip
 frontend.zip
 error.log
+playwright-report/
+test-results/

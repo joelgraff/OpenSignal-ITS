@@ -17,6 +17,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Install uv
         run: python -m pip install uv
 
@@ -25,8 +30,17 @@ jobs:
           uv venv .venv --python 3.12 --clear
           UV_PROJECT_ENVIRONMENT=.venv uv sync
 
+      - name: Install Playwright test dependency
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
       - name: Run regression suite
         run: .venv/bin/python -m unittest discover -s opensignal_its/tests -p 'test_*.py'
 
       - name: Run full Reflex boot smoke
         run: .venv/bin/python scripts/reflex_boot_smoke.py --frontend-port 3002 --backend-port 8001
+
+      - name: Run Playwright auth smoke
+        run: .venv/bin/python scripts/reflex_playwright_smoke.py

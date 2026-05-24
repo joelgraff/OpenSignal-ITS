@@ -36,6 +36,16 @@ For a full startup smoke that boots Reflex, probes the frontend and backend, and
 .venv/bin/python scripts/reflex_boot_smoke.py --frontend-port 3002 --backend-port 8001
 ```
 
+For a browser-level auth and workspace-navigation smoke, install the Playwright test dependency once and then run:
+
+```bash
+npm install
+npx playwright install chromium
+.venv/bin/python scripts/reflex_playwright_smoke.py
+```
+
+That smoke launches Reflex with deterministic local test credentials, verifies the unauthenticated gate, signs in, checks key workspaces, and signs out.
+
 For full instructions and troubleshooting, see:
 
 - [docs/ubuntu-development-setup.md](docs/ubuntu-development-setup.md)
