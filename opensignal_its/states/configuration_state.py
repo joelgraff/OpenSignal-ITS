@@ -209,6 +209,28 @@ class ConfigurationStateMixin(rx.State, mixin=True):
     def load_controller_profile_from_row(self, device_id: str):
         self.load_controller_profile(device_id)
 
+    def open_controller_profile_editor(self, device_id: str):
+        target = device_id.strip()
+        if not target:
+            self.controller_profile_notice = "Choose a controller profile to edit."
+            return
+
+        self.controller_profile_filter_text = ""
+        self.controller_profile_mapping_filter = "all"
+
+        update_workspace_mode = getattr(self, "update_ui_workspace_mode", None)
+        if callable(update_workspace_mode):
+            update_workspace_mode("configuration")
+        else:
+            self.ui_workspace_mode = "configuration"
+            self._sync_controller_profile_rows()
+
+        self.load_controller_profile(target)
+        if self.controller_profile_original_device_id == target:
+            self.controller_profile_notice = (
+                f"Opened Controllers for {target}. Add coordinates and save to place it on the map."
+            )
+
     def save_controller_profile(self):
         self.controller_profile_form_error = ""
         try:

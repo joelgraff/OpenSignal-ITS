@@ -236,6 +236,32 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual(["int-2"], [row["device_id"] for row in probe.controller_profile_rows])
         self.assertIn("Showing 1 of 2 controller profiles.", probe.controller_profile_notice)
 
+    def test_configuration_state_open_controller_profile_editor_switches_workspace_and_loads_profile(self):
+        class _ConfigurationWorkspaceProbe(ConfigurationStateMixin, WorkspaceStateMixin, rx.State):
+            device_profiles_json: str = """[
+                {
+                    "device_id": "int-2",
+                    "name": "Broadway",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.2"
+                }
+            ]"""
+            controller_profile_filter_text: str = "downtown"
+            controller_profile_mapping_filter: str = "unmapped"
+            selected_device_id: str = ""
+            fleet_status_by_id: dict[str, object] = {}
+
+        probe = _ConfigurationWorkspaceProbe(_reflex_internal_init=True)
+
+        probe.open_controller_profile_editor("int-2")
+
+        self.assertEqual("configuration", probe.ui_workspace_mode)
+        self.assertEqual("", probe.controller_profile_filter_text)
+        self.assertEqual("all", probe.controller_profile_mapping_filter)
+        self.assertEqual("int-2", probe.controller_profile_form_device_id)
+        self.assertEqual("Broadway", probe.controller_profile_form_name)
+        self.assertIn("Opened Controllers for int-2.", probe.controller_profile_notice)
+
     def test_fleet_state_refresh_fleet_card_fields_applies_mapping_filter(self):
         class _FleetProbe(FleetStateMixin, rx.State):
             device_profiles_json: str = """[
@@ -517,6 +543,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "new_controller_profile",
             "load_controller_profile",
             "load_controller_profile_from_row",
+            "open_controller_profile_editor",
             "save_controller_profile",
             "delete_controller_profile",
             "open_selected_controller_status",

@@ -54,6 +54,16 @@ def _detail_tab_button(label: str, tab_key: str) -> rx.Component:
     )
 
 
+def _unmapped_profile_button(device_id: str) -> rx.Component:
+    return rx.button(
+        device_id,
+        on_click=lambda: TrafficState.open_controller_profile_editor(device_id),
+        size="1",
+        variant="soft",
+        color_scheme="amber",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Dashboard view (Step 2)
 # ---------------------------------------------------------------------------
@@ -132,7 +142,7 @@ def _dashboard_map_panel() -> rx.Component:
                             rx.box(
                                 rx.foreach(
                                     TrafficState.fleet_unmapped_device_ids,
-                                    lambda device_id: rx.badge(device_id, color_scheme="gray", size="1"),
+                                    _unmapped_profile_button,
                                 ),
                                 display="flex",
                                 flex_wrap="wrap",
@@ -171,14 +181,14 @@ def _dashboard_map_panel() -> rx.Component:
                 TrafficState.fleet_unmapped_device_ids != [],
                 rx.vstack(
                     rx.text(
-                        "Awaiting coordinates",
+                        "Awaiting coordinates. Open a controller below to record them.",
                         size="1",
                         color="gray",
                     ),
                     rx.box(
                         rx.foreach(
                             TrafficState.fleet_unmapped_device_ids,
-                            lambda device_id: rx.badge(device_id, color_scheme="gray", size="1", variant="soft"),
+                            _unmapped_profile_button,
                         ),
                         display="flex",
                         flex_wrap="wrap",
