@@ -89,6 +89,32 @@ def _alarm_history_filter_summary() -> rx.Component:
     )
 
 
+def _alarm_history_action_button(
+    label: str,
+    filter_value: str,
+    active_color: str = "gray",
+) -> rx.Component:
+    is_active = TrafficState.alarm_history_action_filter == filter_value
+    return rx.button(
+        label,
+        on_click=lambda: TrafficState.update_alarm_history_action_filter(filter_value),
+        size="1",
+        variant=rx.cond(is_active, "solid", "soft"),
+        color_scheme=rx.cond(is_active, active_color, "gray"),
+    )
+
+
+def _event_window_button(label: str, window_value: str) -> rx.Component:
+    is_active = TrafficState.event_window == window_value
+    return rx.button(
+        label,
+        on_click=lambda: TrafficState.update_event_window(window_value),
+        size="1",
+        variant=rx.cond(is_active, "solid", "soft"),
+        color_scheme=rx.cond(is_active, "indigo", "gray"),
+    )
+
+
 def analytics_workspace_section() -> rx.Component:
     return rx.cond(
         TrafficState.ui_workspace_mode == "analytics",
@@ -100,10 +126,10 @@ def analytics_workspace_section() -> rx.Component:
                     size="1",
                     variant="outline",
                 ),
-                rx.button("15m", on_click=lambda: TrafficState.update_event_window("15m"), size="1", variant="soft"),
-                rx.button("1h", on_click=lambda: TrafficState.update_event_window("1h"), size="1", variant="soft"),
-                rx.button("24h", on_click=lambda: TrafficState.update_event_window("24h"), size="1", variant="soft"),
-                rx.button("All", on_click=lambda: TrafficState.update_event_window("all"), size="1", variant="soft"),
+                _event_window_button("15m", "15m"),
+                _event_window_button("1h", "1h"),
+                _event_window_button("24h", "24h"),
+                _event_window_button("All", "all"),
                 width="100%",
                 spacing="2",
                 wrap="wrap",
@@ -223,9 +249,9 @@ def analytics_workspace_section() -> rx.Component:
                     subtitle="Filter by action, actor, or alarm key.",
                     body=rx.vstack(
                         rx.hstack(
-                            rx.button("All", on_click=lambda: TrafficState.update_alarm_history_action_filter("all"), size="1", variant="soft"),
-                            rx.button("Ack", on_click=lambda: TrafficState.update_alarm_history_action_filter("acknowledge"), size="1", variant="soft"),
-                            rx.button("Silence", on_click=lambda: TrafficState.update_alarm_history_action_filter("silence"), size="1", variant="soft"),
+                            _alarm_history_action_button("All", "all"),
+                            _alarm_history_action_button("Ack", "acknowledge", "green"),
+                            _alarm_history_action_button("Silence", "silence", "orange"),
                             width="100%",
                             spacing="2",
                             wrap="wrap",
