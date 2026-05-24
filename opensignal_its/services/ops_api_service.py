@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from ..db import STORE
@@ -46,17 +47,54 @@ class OpsApiService:
         return values
 
     @staticmethod
+    def _allow_unauthenticated_ops_api() -> bool:
+        return OpsApiService._bool_env("OPENSIGNAL_OPS_API_ALLOW_UNAUTHENTICATED", False)
+
+    @staticmethod
+    def extract_api_token(api_token: str = "", authorization: str = "") -> str:
+        raw_auth = authorization.strip()
+        if raw_auth:
+            lowered = raw_auth.lower()
+            if lowered.startswith("bearer "):
+                return raw_auth[7:].strip()
+            return raw_auth
+        return api_token.strip()
+
+    @staticmethod
     def validate_access(api_token: str) -> tuple[bool, str]:
         if not OpsApiService.ops_api_enabled():
             return False, "Operational API is disabled by configuration."
 
         configured = OpsApiService.required_api_token_values()
         if not configured:
-            return True, "Operational API access granted."
+            if OpsApiService._allow_unauthenticated_ops_api():
+                return True, "Operational API access granted (unauthenticated override enabled)."
+            return False, "Operational API access denied: token configuration required."
 
         if not any_secret_matches(api_token, configured):
             return False, "Operational API access denied: invalid token."
         return True, "Operational API access granted."
+
+    @staticmethod
+    def _resolve_audit_export_path(file_path: str) -> str:
+        base_dir = os.getenv("OPENSIGNAL_AUDIT_EXPORT_DIR", "runtime_reports").strip() or "runtime_reports"
+        base_path = Path(base_dir).expanduser().resolve()
+
+        configured_default = os.getenv("OPENSIGNAL_AUDIT_EXPORT_PATH", "latest_runtime_report.json")
+        requested_raw = file_path.strip() or configured_default.strip() or "latest_runtime_report.json"
+        requested_path = Path(requested_raw).expanduser()
+        if requested_path.is_absolute():
+            resolved_target = requested_path.resolve()
+        else:
+            resolved_target = (base_path / requested_path).resolve()
+
+        try:
+            resolved_target.relative_to(base_path)
+        except ValueError as exc:
+            raise ValueError(
+                f"Audit export path must be within configured export directory: {base_path}"
+            ) from exc
+        return str(resolved_target)
 
     @staticmethod
     def _int_env(name: str, default: int) -> int:
@@ -237,10 +275,7 @@ class OpsApiService:
         command_limit: int = 200,
         snapshot_limit: int = 200,
     ) -> dict[str, Any]:
-        target = file_path.strip() or os.getenv(
-            "OPENSIGNAL_AUDIT_EXPORT_PATH",
-            "runtime_reports/latest_runtime_report.json",
-        )
+        target = OpsApiService._resolve_audit_export_path(file_path)
         exported_path = STORE.export_activity_report(
             file_path=target,
             command_limit=max(1, min(1000, int(command_limit))),

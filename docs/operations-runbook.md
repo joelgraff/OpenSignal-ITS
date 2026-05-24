@@ -146,12 +146,16 @@ For deterministic unit/integration tests, endpoint handlers are also exposed in 
 Access controls:
 
 - `OPENSIGNAL_OPS_API_ENABLED` (`true`/`false`) to enable or disable route registration.
-- Optional token controls:
+- Required token controls by default:
 	- `OPENSIGNAL_OPS_API_TOKEN`
 	- `OPENSIGNAL_OPS_API_TOKEN_HASH`
 	- `OPENSIGNAL_OPS_API_TOKEN_HASHES`
+- Local-only override (not recommended outside isolated dev):
+	- `OPENSIGNAL_OPS_API_ALLOW_UNAUTHENTICATED`
 
-When token controls are configured, include `api_token` query parameter with each request.
+Provide auth using `Authorization: Bearer <token>` (preferred). Legacy `api_token` query param remains supported for compatibility.
+
+Audit export writes are restricted to `OPENSIGNAL_AUDIT_EXPORT_DIR` (default `runtime_reports`).
 
 ### Managed Polling Runtime Controls
 

@@ -11,6 +11,7 @@ import reflex as rx
 from ..devices.parsers import build_siemens_m60_view
 from ..db import CommandAuditRecord, STORE
 from ..models.device import DeviceConfig
+from ..models.fleet import FleetRefreshView
 from ..services import (
     CommandSafetyService,
     CommandService,
@@ -22,6 +23,30 @@ from ..services import (
     PollingService,
     scheduler_status,
 )
+
+
+_LOGIN_DISABLED = os.getenv("OPENSIGNAL_DISABLE_LOGIN", "1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+_LOGIN_BYPASS_OPERATOR = os.getenv("OPENSIGNAL_BYPASS_OPERATOR", "local-access").strip() or "local-access"
+
+
+
+def _fleet_view_to_state_fields(refresh_view: FleetRefreshView) -> dict[str, Any]:
+    return {
+        "selected_device_id": str(refresh_view.selected_device_id),
+        "fleet_status_by_id": {
+            key: value.model_dump(mode="json")
+            for key, value in refresh_view.status_by_id.items()
+        },
+        "fleet_device_rows": list(refresh_view.rows),
+        "selected_payload": refresh_view.selected_payload,
+        "selected_mp_model": int(refresh_view.selected_mp_model),
+        "selected_device_type": str(refresh_view.selected_device_type),
+    }
 
 
 class TrafficState(rx.State):
@@ -91,10 +116,14 @@ class TrafficState(rx.State):
     alarm_action_notice: str = ""
     login_username_input: str = ""
     login_password_input: str = ""
-    is_authenticated: bool = False
-    current_operator: str = ""
-    current_role: str = "viewer"
-    auth_notice: str = "Operator not authenticated."
+    is_authenticated: bool = _LOGIN_DISABLED
+    current_operator: str = _LOGIN_BYPASS_OPERATOR if _LOGIN_DISABLED else ""
+    current_role: str = "admin" if _LOGIN_DISABLED else "viewer"
+    auth_notice: str = (
+        "Login disabled for local development."
+        if _LOGIN_DISABLED
+        else "Operator not authenticated."
+    )
     failed_login_attempts: int = 0
     login_lockout_until: str = ""
     safe_command_probe: bool = True
@@ -130,6 +159,7 @@ class TrafficState(rx.State):
     auto_reconnect_enabled: bool = True
     reconnect_interval_text: str = "10"
     auto_refresh_running: bool = False
+    ui_workspace_mode: str = "monitor"
 
     def update_ip_address(self, value: str):
         self.ip_address = value
@@ -219,6 +249,11 @@ class TrafficState(rx.State):
     def update_reconnect_interval_text(self, value: str):
         self.reconnect_interval_text = value
 
+    def update_ui_workspace_mode(self, value: str):
+        normalized = value.strip().lower()
+        if normalized in {"monitor", "control", "operations", "analytics", "configuration", "admin"}:
+            self.ui_workspace_mode = normalized
+
     def _refresh_interval_seconds(self) -> float:
         try:
             return max(1.0, float(self.refresh_interval_text))
@@ -285,6 +320,8 @@ class TrafficState(rx.State):
         return "anonymous"
 
     def _is_role_authorized(self, allowed_roles: set[str]) -> bool:
+        if _LOGIN_DISABLED:
+            return True
         if not self.is_authenticated:
             return False
         return OperatorAuthService.role_authorized(self.current_role, allowed_roles)
@@ -348,16 +385,12 @@ class TrafficState(rx.State):
 
     def _selected_device_target(self) -> tuple[str, str, DeviceConfig]:
         profiles = self._fleet_profiles()
-        selected = FleetService.select_profile(profiles, self.selected_device_id)
-        if selected is None:
-            config = self._build_config()
-            return "siemens_m60", self.ip_address.strip() or "single-device", config
-
-        config = FleetService.build_device_config(selected)
-        return (
-            str(selected.get("device_type", FleetService.DEFAULT_DEVICE_TYPE)),
-            str(selected.get("device_id", config.name)),
-            config,
+        return FleetService.resolve_target(
+            profiles=profiles,
+            selected_device_id=self.selected_device_id,
+            fallback_config=self._build_config(),
+            fallback_device_id=self.ip_address.strip() or "single-device",
+            fallback_device_type=FleetService.DEFAULT_DEVICE_TYPE,
         )
 
     def _refresh_fleet_aggregate_fields(self):
@@ -541,6 +574,17 @@ class TrafficState(rx.State):
         self.safety_notice = "Write mode locked."
 
     def login_operator(self):
+        if _LOGIN_DISABLED:
+            self.is_authenticated = True
+            self.current_operator = _LOGIN_BYPASS_OPERATOR
+            self.current_role = "admin"
+            self.auth_notice = "Login is disabled; using local admin session."
+            self.error = ""
+            self.failed_login_attempts = 0
+            self.login_lockout_until = ""
+            self.login_password_input = ""
+            return
+
         if self._is_login_locked():
             self.is_authenticated = False
             self.current_operator = ""
@@ -581,6 +625,16 @@ class TrafficState(rx.State):
         self.login_password_input = ""
 
     def logout_operator(self):
+        if _LOGIN_DISABLED:
+            self.is_authenticated = True
+            self.current_operator = _LOGIN_BYPASS_OPERATOR
+            self.current_role = "admin"
+            self.auth_notice = "Login remains disabled for local development."
+            self.login_password_input = ""
+            self.operator_key_input = ""
+            self.error = ""
+            return
+
         self.is_authenticated = False
         self.current_operator = ""
         self.current_role = "viewer"
@@ -590,6 +644,13 @@ class TrafficState(rx.State):
         self.lock_write_mode()
 
     def reset_login_lockout(self):
+        if _LOGIN_DISABLED:
+            self.failed_login_attempts = 0
+            self.login_lockout_until = ""
+            self.admin_recovery_notice = "Login is disabled; lockout reset is not required."
+            self.error = ""
+            return
+
         ok, message = OperatorAuthService.validate_admin_recovery_key(self.admin_recovery_key_input)
         self.admin_recovery_key_input = ""
         if not ok:
@@ -760,67 +821,35 @@ class TrafficState(rx.State):
             self.fleet_device_rows = []
             return
 
-        selected = FleetService.select_profile(profiles, self.selected_device_id)
-        if selected is not None:
-            self.selected_device_id = str(selected.get("device_id", ""))
-
-        rows: list[str] = []
-        status_by_id: dict[str, dict[str, Any]] = {}
-        selected_payload: dict | None = None
-        selected_mp_model = 1
-        selected_device_type = FleetService.DEFAULT_DEVICE_TYPE
-
-        for profile in profiles:
-            device_id = str(profile.get("device_id", "unknown"))
-            device_type = str(profile.get("device_type", FleetService.DEFAULT_DEVICE_TYPE))
-            config = FleetService.build_device_config(profile)
-            try:
-                payload, mp_model = await PollingService.collect_snapshot(
-                    device_type,
-                    config,
-                    device_id=device_id,
-                )
-                status_by_id[device_id] = {
-                    "device_type": device_type,
-                    "is_online": bool(payload.get("is_online", False)),
-                    "status_text": str(payload.get("status_text", "unknown")),
-                    "timestamp": str(payload.get("timestamp", "")),
-                }
-                rows.append(FleetService.format_status_row(device_id, device_type, payload))
-
-                if device_id == self.selected_device_id:
-                    selected_payload = payload
-                    selected_mp_model = mp_model
-                    selected_device_type = device_type
-            except Exception as exc:
-                rows.append(f"{device_id} [{device_type}] ERROR - {exc}")
-                status_by_id[device_id] = {
-                    "device_type": device_type,
-                    "is_online": False,
-                    "status_text": f"error: {exc}",
-                    "timestamp": "",
-                }
-
-        self.fleet_status_by_id = status_by_id
-        self.fleet_device_rows = rows
+        refresh_view = await FleetService.collect_refresh_view(
+            profiles=profiles,
+            selected_device_id=self.selected_device_id,
+            collector=PollingService.collect_snapshot,
+        )
+        adapted = _fleet_view_to_state_fields(refresh_view)
+        self.selected_device_id = str(adapted["selected_device_id"])
+        self.fleet_status_by_id = dict(adapted["fleet_status_by_id"])
+        self.fleet_device_rows = list(adapted["fleet_device_rows"])
         self._refresh_fleet_aggregate_fields()
         self.refresh_runtime_registry_status()
 
+        selected_payload = adapted["selected_payload"]
         if selected_payload is not None:
-            self._apply_status_snapshot(selected_payload, selected_mp_model)
-            self._cache_device_status(self.selected_device_id, selected_device_type, selected_payload)
+            self._apply_status_snapshot(
+                dict(selected_payload),
+                int(adapted["selected_mp_model"]),
+            )
+            self._cache_device_status(
+                self.selected_device_id,
+                str(adapted["selected_device_type"]),
+                dict(selected_payload),
+            )
 
     def refresh_runtime_registry_status(self):
         status = PollingService.runtime_status()
-        count = int(status.get("count", 0))
-        running = int(status.get("running_count", 0))
-        self.runtime_registry_summary = f"Runtime registry: {count} devices, {running} polling tasks running."
-        rows: list[str] = []
-        for key in status.get("keys", []):
-            key_text = str(key)
-            running_suffix = " (polling)" if key_text in set(str(k) for k in status.get("running_keys", [])) else ""
-            rows.append(f"{key_text}{running_suffix}")
-        self.runtime_registry_rows = rows
+        view = FleetService.build_runtime_registry_view(status)
+        self.runtime_registry_summary = str(view.summary)
+        self.runtime_registry_rows = list(view.rows)
 
     def refresh_events_and_alarms(self):
         try:

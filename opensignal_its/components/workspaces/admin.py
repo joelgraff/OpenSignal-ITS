@@ -1,0 +1,81 @@
+import reflex as rx
+
+from ...states.traffic_state import TrafficState
+from .page_frame import workspace_page_frame
+
+
+def admin_workspace_page() -> rx.Component:
+    return workspace_page_frame(
+        title="Admin & Access",
+        subtitle="Sign in to unlock signal sites, control, maintenance, and analytics pages.",
+        body=rx.vstack(
+            rx.card(
+                rx.vstack(
+                    rx.heading("Operator Session", size="3"),
+                    rx.input(
+                        value=TrafficState.login_username_input,
+                        on_change=TrafficState.update_login_username_input,
+                        placeholder="Operator username",
+                        width="100%",
+                    ),
+                    rx.input(
+                        value=TrafficState.login_password_input,
+                        on_change=TrafficState.update_login_password_input,
+                        placeholder="Operator password",
+                        type="password",
+                        width="100%",
+                    ),
+                    rx.hstack(
+                        rx.button(
+                            "Login Operator",
+                            on_click=TrafficState.login_operator,
+                            size="2",
+                            color_scheme="green",
+                        ),
+                        rx.button(
+                            "Logout Operator",
+                            on_click=TrafficState.logout_operator,
+                            size="2",
+                            variant="outline",
+                        ),
+                        width="100%",
+                        spacing="2",
+                        align="center",
+                    ),
+                    rx.text(TrafficState.auth_notice, size="2", color="gray"),
+                    spacing="2",
+                    width="100%",
+                ),
+                width="100%",
+            ),
+            rx.card(
+                rx.vstack(
+                    rx.heading("Recovery", size="3"),
+                    rx.input(
+                        value=TrafficState.admin_recovery_key_input,
+                        on_change=TrafficState.update_admin_recovery_key_input,
+                        placeholder="Admin recovery key",
+                        type="password",
+                        width="100%",
+                    ),
+                    rx.button(
+                        "Reset Login Lockout",
+                        on_click=TrafficState.reset_login_lockout,
+                        size="2",
+                        variant="outline",
+                        width="100%",
+                    ),
+                    rx.cond(
+                        TrafficState.admin_recovery_notice != "",
+                        rx.text(TrafficState.admin_recovery_notice, size="2", color="gray"),
+                        rx.fragment(),
+                    ),
+                    spacing="2",
+                    width="100%",
+                ),
+                width="100%",
+            ),
+            spacing="3",
+            width="100%",
+        ),
+    )

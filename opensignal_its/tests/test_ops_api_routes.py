@@ -12,6 +12,8 @@ class OpsApiRoutesTests(unittest.TestCase):
             "OPENSIGNAL_OPS_API_TOKEN": os.environ.get("OPENSIGNAL_OPS_API_TOKEN"),
             "OPENSIGNAL_OPS_API_TOKEN_HASH": os.environ.get("OPENSIGNAL_OPS_API_TOKEN_HASH"),
             "OPENSIGNAL_OPS_API_TOKEN_HASHES": os.environ.get("OPENSIGNAL_OPS_API_TOKEN_HASHES"),
+            "OPENSIGNAL_OPS_API_ALLOW_UNAUTHENTICATED": os.environ.get("OPENSIGNAL_OPS_API_ALLOW_UNAUTHENTICATED"),
+            "OPENSIGNAL_AUDIT_EXPORT_DIR": os.environ.get("OPENSIGNAL_AUDIT_EXPORT_DIR"),
         }
 
     def tearDown(self):
@@ -36,6 +38,7 @@ class OpsApiRoutesTests(unittest.TestCase):
 
     def test_ops_routes_registered_when_enabled(self):
         os.environ["OPENSIGNAL_OPS_API_ENABLED"] = "true"
+        os.environ["OPENSIGNAL_OPS_API_ALLOW_UNAUTHENTICATED"] = "true"
         os.environ.pop("OPENSIGNAL_OPS_API_TOKEN", None)
         os.environ.pop("OPENSIGNAL_OPS_API_TOKEN_HASH", None)
         os.environ.pop("OPENSIGNAL_OPS_API_TOKEN_HASHES", None)
@@ -78,12 +81,26 @@ class OpsApiRoutesTests(unittest.TestCase):
             action_filter="all",
             actor_contains="",
             key_contains="",
-            api_token="secret-token",
+            authorization="Bearer secret-token",
         )
 
         self.assertTrue(payload["ok"])
         self.assertIn("rows", payload)
         self.assertLessEqual(int(payload["count"]), 5)
+
+    def test_ops_route_denies_when_token_not_configured_by_default(self):
+        os.environ["OPENSIGNAL_OPS_API_ENABLED"] = "true"
+        os.environ["OPENSIGNAL_OPS_API_ALLOW_UNAUTHENTICATED"] = "false"
+        os.environ.pop("OPENSIGNAL_OPS_API_TOKEN", None)
+        os.environ.pop("OPENSIGNAL_OPS_API_TOKEN_HASH", None)
+        os.environ.pop("OPENSIGNAL_OPS_API_TOKEN_HASHES", None)
+
+        app_module = self._load_app_module()
+        routes = self._ops_routes(app_module)
+        payload = routes["/api/ops/health"]()
+
+        self.assertFalse(payload["ok"])
+        self.assertIn("token configuration required", payload["error"])
 
     def test_ops_audit_export_route_returns_exported_path(self):
         os.environ["OPENSIGNAL_OPS_API_ENABLED"] = "true"
@@ -93,16 +110,17 @@ class OpsApiRoutesTests(unittest.TestCase):
         routes = self._ops_routes(app_module)
 
         with tempfile.TemporaryDirectory() as tmp:
-            target = str(Path(tmp) / "ops" / "report.json")
+            os.environ["OPENSIGNAL_AUDIT_EXPORT_DIR"] = str(Path(tmp) / "exports")
+            target = "ops/report.json"
             payload = routes["/api/ops/audit-export"](
                 file_path=target,
                 command_limit=10,
                 snapshot_limit=10,
-                api_token="secret-token",
+                authorization="Bearer secret-token",
             )
 
         self.assertTrue(payload["ok"])
-        self.assertEqual(target, payload["file_path"])
+        self.assertTrue(str(payload["file_path"]).startswith(str(Path(tmp) / "exports")))
 
 
 if __name__ == "__main__":

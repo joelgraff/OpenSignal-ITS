@@ -1,5 +1,8 @@
 import unittest
+import asyncio
 
+from opensignal_its.models.device import DeviceConfig
+from opensignal_its.models.fleet import FleetRefreshView, FleetSnapshotEntry, RuntimeRegistryView
 from opensignal_its.services.fleet_service import FleetService
 
 
@@ -62,6 +65,161 @@ class FleetServiceTests(unittest.TestCase):
         self.assertIn("int-1", row)
         self.assertIn("siemens_m60", row)
         self.assertIn("ONLINE", row)
+
+    def test_resolve_target_uses_selected_profile(self):
+        profiles = [
+            {"device_id": "a", "device_type": "siemens_m60", "ip_address": "10.0.0.1"},
+            {"device_id": "b", "device_type": "siemens_m60", "ip_address": "10.0.0.2"},
+        ]
+        fallback = DeviceConfig(ip_address="10.0.0.100")
+
+        device_type, device_id, config = FleetService.resolve_target(
+            profiles=profiles,
+            selected_device_id="b",
+            fallback_config=fallback,
+            fallback_device_id="single",
+        )
+
+        self.assertEqual("siemens_m60", device_type)
+        self.assertEqual("b", device_id)
+        self.assertEqual("10.0.0.2", config.ip_address)
+
+    def test_resolve_target_falls_back_when_profiles_empty(self):
+        fallback = DeviceConfig(ip_address="10.0.0.100")
+
+        device_type, device_id, config = FleetService.resolve_target(
+            profiles=[],
+            selected_device_id="",
+            fallback_config=fallback,
+            fallback_device_id="legacy-device",
+            fallback_device_type="siemens_m60",
+        )
+
+        self.assertEqual("siemens_m60", device_type)
+        self.assertEqual("legacy-device", device_id)
+        self.assertEqual("10.0.0.100", config.ip_address)
+
+    def test_build_snapshot_entry_success(self):
+        entry = FleetService.build_snapshot_entry(
+            device_id="int-1",
+            device_type="siemens_m60",
+            payload={"is_online": True, "status_text": "ok", "timestamp": "2026-05-23T00:00:00+00:00"},
+            mp_model=1,
+        )
+        self.assertIsInstance(entry, FleetSnapshotEntry)
+        self.assertEqual("int-1", entry.device_id)
+        self.assertTrue(bool(entry.status.is_online))
+        self.assertIn("ONLINE", entry.row)
+        self.assertIsNotNone(entry.payload)
+
+    def test_build_snapshot_entry_error(self):
+        entry = FleetService.build_snapshot_entry(
+            device_id="int-2",
+            device_type="siemens_m60",
+            payload=None,
+            mp_model=1,
+            error="connect timeout",
+        )
+        self.assertIsInstance(entry, FleetSnapshotEntry)
+        self.assertEqual("int-2", entry.device_id)
+        self.assertFalse(bool(entry.status.is_online))
+        self.assertIn("ERROR", entry.row)
+        self.assertIsNone(entry.payload)
+
+    def test_compile_refresh_view_selects_matching_payload(self):
+        entries = [
+            FleetService.build_snapshot_entry(
+                device_id="a",
+                device_type="siemens_m60",
+                payload={"is_online": True, "status_text": "ok-a", "timestamp": "t1"},
+                mp_model=1,
+            ),
+            FleetService.build_snapshot_entry(
+                device_id="b",
+                device_type="siemens_m60",
+                payload={"is_online": False, "status_text": "ok-b", "timestamp": "t2"},
+                mp_model=0,
+            ),
+        ]
+        view = FleetService.compile_refresh_view(entries, selected_device_id="b")
+        self.assertIsInstance(view, FleetRefreshView)
+        self.assertEqual(2, len(view.rows))
+        self.assertIn("a", view.status_by_id)
+        self.assertIn("b", view.status_by_id)
+        assert view.selected_payload is not None
+        self.assertEqual("ok-b", view.selected_payload["status_text"])
+        self.assertEqual(0, int(view.selected_mp_model))
+
+    def test_collect_refresh_view_builds_status_and_rows(self):
+        profiles = [
+            {"device_id": "a", "device_type": "siemens_m60", "ip_address": "10.0.0.1"},
+            {"device_id": "b", "device_type": "siemens_m60", "ip_address": "10.0.0.2"},
+        ]
+
+        async def collector(device_type, config, device_id=""):
+            if device_id == "a":
+                return {"is_online": True, "status_text": "ok-a", "timestamp": "t1"}, 1
+            raise RuntimeError("connect failed")
+
+        view = asyncio.run(
+            FleetService.collect_refresh_view(
+                profiles=profiles,
+                selected_device_id="a",
+                collector=collector,
+            )
+        )
+
+        self.assertIsInstance(view, FleetRefreshView)
+        self.assertEqual("a", view.selected_device_id)
+        self.assertEqual(2, len(view.rows))
+        self.assertIn("a", view.status_by_id)
+        self.assertIn("b", view.status_by_id)
+        self.assertTrue(bool(view.selected_payload))
+
+    def test_collect_refresh_view_selects_first_when_missing(self):
+        profiles = [
+            {"device_id": "a", "device_type": "siemens_m60", "ip_address": "10.0.0.1"},
+            {"device_id": "b", "device_type": "siemens_m60", "ip_address": "10.0.0.2"},
+        ]
+
+        async def collector(device_type, config, device_id=""):
+            return {"is_online": True, "status_text": f"ok-{device_id}", "timestamp": "t"}, 1
+
+        view = asyncio.run(
+            FleetService.collect_refresh_view(
+                profiles=profiles,
+                selected_device_id="missing",
+                collector=collector,
+            )
+        )
+
+        self.assertEqual("a", view.selected_device_id)
+        assert view.selected_payload is not None
+        self.assertEqual("ok-a", view.selected_payload["status_text"])
+
+    def test_build_runtime_registry_view_formats_summary_and_rows(self):
+        status = {
+            "count": 2,
+            "running_count": 1,
+            "keys": ["siemens_m60::a", "siemens_m60::b"],
+            "running_keys": ["siemens_m60::b"],
+        }
+
+        view = FleetService.build_runtime_registry_view(status)
+
+        self.assertIsInstance(view, RuntimeRegistryView)
+        self.assertIn("2 devices", view.summary)
+        self.assertEqual(2, len(view.rows))
+        self.assertIn("siemens_m60::a", view.rows[0])
+        self.assertIn("siemens_m60::b (polling)", view.rows[1])
+
+    def test_build_runtime_registry_view_handles_missing_fields(self):
+        view = FleetService.build_runtime_registry_view({})
+
+        self.assertEqual("Runtime registry: 0 devices, 0 polling tasks running.", view.summary)
+        self.assertEqual([], view.rows)
+        self.assertEqual(0, int(view.count))
+        self.assertEqual(0, int(view.running_count))
 
 
 if __name__ == "__main__":

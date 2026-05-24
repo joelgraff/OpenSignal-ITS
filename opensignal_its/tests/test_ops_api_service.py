@@ -20,6 +20,9 @@ class OpsApiServiceTests(unittest.TestCase):
             "OPENSIGNAL_OPS_API_TOKEN": os.environ.get("OPENSIGNAL_OPS_API_TOKEN"),
             "OPENSIGNAL_OPS_API_TOKEN_HASH": os.environ.get("OPENSIGNAL_OPS_API_TOKEN_HASH"),
             "OPENSIGNAL_OPS_API_TOKEN_HASHES": os.environ.get("OPENSIGNAL_OPS_API_TOKEN_HASHES"),
+            "OPENSIGNAL_OPS_API_ALLOW_UNAUTHENTICATED": os.environ.get("OPENSIGNAL_OPS_API_ALLOW_UNAUTHENTICATED"),
+            "OPENSIGNAL_AUDIT_EXPORT_DIR": os.environ.get("OPENSIGNAL_AUDIT_EXPORT_DIR"),
+            "OPENSIGNAL_AUDIT_EXPORT_PATH": os.environ.get("OPENSIGNAL_AUDIT_EXPORT_PATH"),
             "OPENSIGNAL_DB_WARN_COMMAND_AUDIT_ROWS": os.environ.get("OPENSIGNAL_DB_WARN_COMMAND_AUDIT_ROWS"),
             "OPENSIGNAL_DB_WARN_STATUS_SNAPSHOTS_ROWS": os.environ.get("OPENSIGNAL_DB_WARN_STATUS_SNAPSHOTS_ROWS"),
             "OPENSIGNAL_DB_WARN_ALARM_ACK_ROWS": os.environ.get("OPENSIGNAL_DB_WARN_ALARM_ACK_ROWS"),
@@ -152,6 +155,37 @@ class OpsApiServiceTests(unittest.TestCase):
         self.assertTrue(ok_hash)
         self.assertFalse(bad)
 
+    def test_validate_access_requires_token_configuration_by_default(self):
+        os.environ["OPENSIGNAL_OPS_API_ENABLED"] = "true"
+        os.environ.pop("OPENSIGNAL_OPS_API_TOKEN", None)
+        os.environ.pop("OPENSIGNAL_OPS_API_TOKEN_HASH", None)
+        os.environ.pop("OPENSIGNAL_OPS_API_TOKEN_HASHES", None)
+        os.environ["OPENSIGNAL_OPS_API_ALLOW_UNAUTHENTICATED"] = "false"
+
+        ok, message = OpsApiService.validate_access(api_token="")
+
+        self.assertFalse(ok)
+        self.assertIn("token configuration required", message)
+
+    def test_validate_access_allows_unauthenticated_override(self):
+        os.environ["OPENSIGNAL_OPS_API_ENABLED"] = "true"
+        os.environ.pop("OPENSIGNAL_OPS_API_TOKEN", None)
+        os.environ.pop("OPENSIGNAL_OPS_API_TOKEN_HASH", None)
+        os.environ.pop("OPENSIGNAL_OPS_API_TOKEN_HASHES", None)
+        os.environ["OPENSIGNAL_OPS_API_ALLOW_UNAUTHENTICATED"] = "true"
+
+        ok, message = OpsApiService.validate_access(api_token="")
+
+        self.assertTrue(ok)
+        self.assertIn("unauthenticated override", message)
+
+    def test_extract_api_token_prefers_bearer_authorization(self):
+        token = OpsApiService.extract_api_token(
+            api_token="query-token",
+            authorization="Bearer header-token",
+        )
+        self.assertEqual("header-token", token)
+
     def test_alarms_and_history_snapshots(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = AuditStore(str(Path(tmp) / "audit.db"))
@@ -192,7 +226,8 @@ class OpsApiServiceTests(unittest.TestCase):
             original_store = ops_api_service.STORE
             ops_api_service.STORE = store
             try:
-                report_path = str(Path(tmp) / "ops" / "audit-report.json")
+                os.environ["OPENSIGNAL_AUDIT_EXPORT_DIR"] = str(Path(tmp) / "exports")
+                report_path = "ops/audit-report.json"
                 payload = OpsApiService.audit_export_snapshot(
                     file_path=report_path,
                     command_limit=5,
@@ -201,9 +236,22 @@ class OpsApiServiceTests(unittest.TestCase):
             finally:
                 ops_api_service.STORE = original_store
 
-        self.assertEqual(report_path, payload["file_path"])
+        self.assertTrue(str(payload["file_path"]).startswith(str(Path(tmp) / "exports")))
         self.assertEqual(5, int(payload["command_limit"]))
         self.assertEqual(5, int(payload["snapshot_limit"]))
+
+    def test_audit_export_snapshot_rejects_path_outside_export_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = AuditStore(str(Path(tmp) / "audit.db"))
+            original_store = ops_api_service.STORE
+            ops_api_service.STORE = store
+            try:
+                os.environ["OPENSIGNAL_AUDIT_EXPORT_DIR"] = str(Path(tmp) / "exports")
+                outside = str(Path(tmp) / "outside" / "bad.json")
+                with self.assertRaises(ValueError):
+                    OpsApiService.audit_export_snapshot(file_path=outside)
+            finally:
+                ops_api_service.STORE = original_store
 
 
 if __name__ == "__main__":
