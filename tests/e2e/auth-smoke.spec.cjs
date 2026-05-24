@@ -24,6 +24,10 @@ test('auth gate and workspace navigation stay functional', async ({ page }) => {
   await page.getByRole('button', { name: 'Maintenance' }).click();
   await expect(page.getByRole('heading', { name: 'System Maintenance' })).toBeVisible();
   await expect(page.getByText('System Health')).toBeVisible();
+  await expect(page.getByText('Runtime health not refreshed yet.')).toBeVisible();
+  await page.getByRole('button', { name: 'Refresh Health' }).click();
+  await expect(page.getByText('Runtime health not refreshed yet.')).not.toBeVisible();
+  await expect(page.getByText(/Scheduler:/)).toBeVisible();
 
   await page.getByRole('button', { name: 'Alarms & Events' }).click();
   await expect(page.getByRole('heading', { name: 'Alarms & Events' })).toBeVisible();
