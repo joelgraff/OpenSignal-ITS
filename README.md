@@ -20,6 +20,14 @@ source .venv/bin/activate
 
 Open `http://localhost:3000`.
 
+To run the local regression baseline:
+
+```bash
+.venv/bin/python -m unittest discover -s opensignal_its/tests -p 'test_*.py'
+```
+
+This suite now includes a dry Reflex compile smoke check so UI compile regressions are caught before a manual `reflex run`.
+
 For full instructions and troubleshooting, see:
 
 - [docs/ubuntu-development-setup.md](docs/ubuntu-development-setup.md)

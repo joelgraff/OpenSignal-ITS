@@ -227,6 +227,7 @@ Current baseline includes:
 2. Command safety policy tests.
 3. Audit persistence and retention tests.
 4. Startup preflight tests.
+5. Dry Reflex compile smoke coverage via `python -m reflex compile --dry --no-rich`.
 
 ## Known Operational Constraints
 
