@@ -54,6 +54,8 @@ class FleetStateMixin(rx.State, mixin=True):
     fleet_device_rows: list[str] = []
     fleet_status_by_id: dict[str, dict[str, Any]] = {}
     fleet_status_cards: list[dict[str, str]] = []
+    fleet_status_mapping_filter: str = "all"
+    fleet_status_card_notice: str = "No controller profiles are configured yet."
     fleet_map_markers: list[dict[str, Any]] = []
     fleet_unmapped_device_ids: list[str] = []
     fleet_map_data: list[dict[str, Any]] = []
@@ -81,6 +83,13 @@ class FleetStateMixin(rx.State, mixin=True):
     def update_reconnect_interval_text(self, value: str):
         self.reconnect_interval_text = value
 
+    def update_fleet_status_mapping_filter(self, value: str):
+        normalized = value.strip().lower()
+        if normalized not in {"all", "mapped", "unmapped"}:
+            return
+        self.fleet_status_mapping_filter = normalized
+        self._refresh_fleet_card_fields()
+
     def _refresh_interval_seconds(self) -> float:
         try:
             return max(1.0, float(self.refresh_interval_text))
@@ -102,10 +111,34 @@ class FleetStateMixin(rx.State, mixin=True):
                 profiles = self._fleet_profiles()
             except Exception:
                 profiles = []
-        self.fleet_status_cards = FleetService.build_profile_display_rows(
+        visible_profiles = FleetService.filter_profiles_by_mapping(
             profiles,
+            self.fleet_status_mapping_filter,
+        )
+        self.fleet_status_cards = FleetService.build_profile_display_rows(
+            visible_profiles,
             self.fleet_status_by_id,
         )
+        visible_count = len(visible_profiles)
+        controller_label = "controller" if visible_count == 1 else "controllers"
+        if not profiles:
+            self.fleet_status_card_notice = "No controller profiles are configured yet."
+        elif self.fleet_status_mapping_filter == "mapped":
+            if visible_count:
+                self.fleet_status_card_notice = f"Showing {visible_count} mapped {controller_label}."
+            else:
+                self.fleet_status_card_notice = "No controllers have coordinates yet."
+        elif self.fleet_status_mapping_filter == "unmapped":
+            if visible_count:
+                self.fleet_status_card_notice = (
+                    f"Showing {visible_count} {controller_label} needing coordinates."
+                )
+            else:
+                self.fleet_status_card_notice = "All configured controllers already have coordinates."
+        else:
+            self.fleet_status_card_notice = (
+                f"Showing all {visible_count} configured {controller_label}."
+            )
 
     def _refresh_fleet_map_fields(self, profiles: list[dict[str, Any]] | None = None):
         if profiles is None:
@@ -186,6 +219,7 @@ class FleetStateMixin(rx.State, mixin=True):
             self.fleet_status_summary = f"Controller profile parse failed: {exc}"
             self.fleet_status_by_id = {}
             self.fleet_status_cards = []
+            self.fleet_status_card_notice = "Fix controller profile JSON to populate the controller list."
             self.fleet_map_markers = []
             self.fleet_unmapped_device_ids = []
             self.fleet_map_data = []
@@ -199,7 +233,7 @@ class FleetStateMixin(rx.State, mixin=True):
         if not profiles:
             self.fleet_status_summary = "Controller profile list is empty; using single-controller compatibility mode."
             self.fleet_status_by_id = {}
-            self.fleet_status_cards = []
+            self._refresh_fleet_card_fields([])
             self._refresh_fleet_map_fields([])
             self.fleet_device_rows = []
             self._sync_controller_profile_rows()

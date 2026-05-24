@@ -97,6 +97,35 @@ class FleetServiceTests(unittest.TestCase):
         self.assertEqual(["int-2"], [p["device_id"] for p in FleetService.filter_profiles(profiles, "int-2")])
         self.assertEqual(["int-1"], [p["device_id"] for p in FleetService.filter_profiles(profiles, "downtown")])
 
+    def test_filter_profiles_by_mapping_returns_mapped_and_unmapped(self):
+        profiles = [
+            {
+                "device_id": "int-1",
+                "device_type": "siemens_m60",
+                "ip_address": "10.0.0.1",
+                "latitude": 40.7128,
+                "longitude": -74.0060,
+            },
+            {
+                "device_id": "int-2",
+                "device_type": "siemens_m60",
+                "ip_address": "10.0.0.2",
+            },
+        ]
+
+        self.assertEqual(
+            ["int-1", "int-2"],
+            [p["device_id"] for p in FleetService.filter_profiles_by_mapping(profiles, "all")],
+        )
+        self.assertEqual(
+            ["int-1"],
+            [p["device_id"] for p in FleetService.filter_profiles_by_mapping(profiles, "mapped")],
+        )
+        self.assertEqual(
+            ["int-2"],
+            [p["device_id"] for p in FleetService.filter_profiles_by_mapping(profiles, "unmapped")],
+        )
+
     def test_sort_profiles_orders_by_name_and_ip(self):
         profiles = [
             {

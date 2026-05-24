@@ -14,18 +14,39 @@ def _sort_button(label: str, sort_key: str) -> rx.Component:
     )
 
 
+def _mapping_filter_button(label: str, filter_value: str, active_color: str) -> rx.Component:
+    return rx.button(
+        label,
+        on_click=lambda: TrafficState.update_controller_profile_mapping_filter(filter_value),
+        size="1",
+        variant=rx.cond(
+            TrafficState.controller_profile_mapping_filter == filter_value,
+            "solid",
+            "soft",
+        ),
+        color_scheme=rx.cond(
+            TrafficState.controller_profile_mapping_filter == filter_value,
+            active_color,
+            "gray",
+        ),
+    )
+
+
 def _controller_profile_roster() -> rx.Component:
     return workspace_section_card(
         title="Configured Controllers",
-        subtitle="Select a controller profile to edit or remove.",
+        subtitle="Select a controller profile to edit, remove, or fill in map coordinates.",
         actions=rx.hstack(
             rx.input(
                 value=TrafficState.controller_profile_filter_text,
                 on_change=TrafficState.update_controller_profile_filter_text,
-                placeholder="Search controllers",
+                placeholder="Search IDs, names, or locations",
                 size="1",
                 max_width="16em",
             ),
+            _mapping_filter_button("All", "all", "gray"),
+            _mapping_filter_button("Mapped", "mapped", "blue"),
+            _mapping_filter_button("Needs Coordinates", "unmapped", "amber"),
             _sort_button("ID", "device_id"),
             _sort_button("Name", "name"),
             _sort_button("Location", "location_name"),

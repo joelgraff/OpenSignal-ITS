@@ -207,6 +207,61 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual(1, len(probe.controller_profile_rows))
         self.assertIn("1 controller profile configured.", probe.controller_profile_notice)
 
+    def test_configuration_state_sync_controller_profile_rows_applies_mapping_filter(self):
+        class _ConfigurationProbe(ConfigurationStateMixin, rx.State):
+            device_profiles_json: str = """[
+                {
+                    "device_id": "int-1",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.1",
+                    "latitude": 40.7128,
+                    "longitude": -74.0060
+                },
+                {
+                    "device_id": "int-2",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.2"
+                }
+            ]"""
+            controller_profile_filter_text: str = ""
+            controller_profile_mapping_filter: str = "unmapped"
+            controller_profile_sort_key: str = "device_id"
+            controller_profile_sort_desc: bool = False
+            fleet_status_by_id: dict[str, object] = {}
+
+        probe = _ConfigurationProbe(_reflex_internal_init=True)
+
+        probe._sync_controller_profile_rows()
+
+        self.assertEqual(["int-2"], [row["device_id"] for row in probe.controller_profile_rows])
+        self.assertIn("Showing 1 of 2 controller profiles.", probe.controller_profile_notice)
+
+    def test_fleet_state_refresh_fleet_card_fields_applies_mapping_filter(self):
+        class _FleetProbe(FleetStateMixin, rx.State):
+            device_profiles_json: str = """[
+                {
+                    "device_id": "int-1",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.1",
+                    "latitude": 40.7128,
+                    "longitude": -74.0060
+                },
+                {
+                    "device_id": "int-2",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.2"
+                }
+            ]"""
+            fleet_status_by_id: dict[str, object] = {}
+            fleet_status_mapping_filter: str = "unmapped"
+
+        probe = _FleetProbe(_reflex_internal_init=True)
+
+        probe._refresh_fleet_card_fields()
+
+        self.assertEqual(["int-2"], [row["device_id"] for row in probe.fleet_status_cards])
+        self.assertEqual("Showing 1 controller needing coordinates.", probe.fleet_status_card_notice)
+
     def test_monitor_state_build_config_normalizes_input(self):
         class _MonitorProbe(MonitorStateMixin, rx.State):
             ip_address: str = "166.156.88.223"
@@ -425,6 +480,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "controller_profile_rows",
             "controller_profile_notice",
             "controller_profile_filter_text",
+            "controller_profile_mapping_filter",
             "controller_profile_sort_key",
             "controller_profile_sort_desc",
             "controller_profile_form_error",
@@ -443,6 +499,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "controller_profile_form_longitude_text",
             "update_device_profiles_json",
             "update_controller_profile_filter_text",
+            "update_controller_profile_mapping_filter",
             "update_controller_profile_sort_key",
             "toggle_controller_profile_sort_direction",
             "update_controller_profile_form_device_id",
@@ -540,6 +597,8 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "fleet_device_rows",
             "fleet_status_by_id",
             "fleet_status_cards",
+            "fleet_status_mapping_filter",
+            "fleet_status_card_notice",
             "fleet_map_markers",
             "fleet_unmapped_device_ids",
             "fleet_map_data",
@@ -558,6 +617,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "update_refresh_interval_text",
             "update_auto_reconnect_enabled",
             "update_reconnect_interval_text",
+            "update_fleet_status_mapping_filter",
             "_refresh_interval_seconds",
             "_reconnect_interval_seconds",
             "_fleet_profiles",

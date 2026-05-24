@@ -209,6 +209,53 @@ def _dashboard_controller_list() -> rx.Component:
             size="1",
             color="gray",
         ),
+        rx.hstack(
+            rx.button(
+                "All",
+                on_click=lambda: TrafficState.update_fleet_status_mapping_filter("all"),
+                size="1",
+                variant=rx.cond(TrafficState.fleet_status_mapping_filter == "all", "solid", "soft"),
+                color_scheme=rx.cond(
+                    TrafficState.fleet_status_mapping_filter == "all",
+                    "gray",
+                    "gray",
+                ),
+            ),
+            rx.button(
+                "Mapped",
+                on_click=lambda: TrafficState.update_fleet_status_mapping_filter("mapped"),
+                size="1",
+                variant=rx.cond(
+                    TrafficState.fleet_status_mapping_filter == "mapped",
+                    "solid",
+                    "soft",
+                ),
+                color_scheme=rx.cond(
+                    TrafficState.fleet_status_mapping_filter == "mapped",
+                    "blue",
+                    "gray",
+                ),
+            ),
+            rx.button(
+                "Needs Coordinates",
+                on_click=lambda: TrafficState.update_fleet_status_mapping_filter("unmapped"),
+                size="1",
+                variant=rx.cond(
+                    TrafficState.fleet_status_mapping_filter == "unmapped",
+                    "solid",
+                    "soft",
+                ),
+                color_scheme=rx.cond(
+                    TrafficState.fleet_status_mapping_filter == "unmapped",
+                    "amber",
+                    "gray",
+                ),
+            ),
+            spacing="2",
+            align="center",
+            wrap="wrap",
+            width="100%",
+        ),
         rx.cond(
             TrafficState.fleet_status_cards != [],
             rx.box(
@@ -268,6 +315,7 @@ def _dashboard_controller_list() -> rx.Component:
             ),
             rx.text("Controller list is empty.", size="1", color="gray"),
         ),
+        rx.text(TrafficState.fleet_status_card_notice, size="1", color="gray"),
         rx.text(TrafficState.fleet_status_summary, size="1", color="gray"),
         spacing="1",
         width="100%",

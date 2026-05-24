@@ -37,6 +37,10 @@ class FleetService:
         return f"{float(latitude):.5f}, {float(longitude):.5f}"
 
     @staticmethod
+    def _has_coordinates(profile: dict[str, Any]) -> bool:
+        return profile.get("latitude") is not None and profile.get("longitude") is not None
+
+    @staticmethod
     def _normalize_optional_coordinate(
         value: Any,
         label: str,
@@ -262,10 +266,7 @@ class FleetService:
                 status_label = "Offline"
                 status_scheme = "red"
 
-            has_coordinates = (
-                normalized.get("latitude") is not None
-                and normalized.get("longitude") is not None
-            )
+            has_coordinates = FleetService._has_coordinates(normalized)
             title = FleetService._primary_profile_label(normalized)
             subtitle = f"{device_id} | {normalized['ip_address']}"
             if title != device_id:
@@ -328,6 +329,25 @@ class FleetService:
                 ]
             ).lower()
             if normalized_query in haystack:
+                filtered.append(normalized)
+        return filtered
+
+    @staticmethod
+    def filter_profiles_by_mapping(
+        profiles: list[dict[str, Any]],
+        mapping_filter: str,
+    ) -> list[dict[str, Any]]:
+        normalized_filter = mapping_filter.strip().lower()
+        if normalized_filter not in {"mapped", "unmapped"}:
+            return [FleetService.normalize_profile(profile) for profile in profiles]
+
+        filtered: list[dict[str, Any]] = []
+        for profile in profiles:
+            normalized = FleetService.normalize_profile(profile)
+            has_coordinates = FleetService._has_coordinates(normalized)
+            if normalized_filter == "mapped" and has_coordinates:
+                filtered.append(normalized)
+            elif normalized_filter == "unmapped" and not has_coordinates:
                 filtered.append(normalized)
         return filtered
 
@@ -397,7 +417,7 @@ class FleetService:
         unmapped: list[str] = []
         for profile in profiles:
             normalized = FleetService.normalize_profile(profile)
-            if normalized.get("latitude") is None or normalized.get("longitude") is None:
+            if not FleetService._has_coordinates(normalized):
                 unmapped.append(normalized["device_id"])
         return unmapped
 

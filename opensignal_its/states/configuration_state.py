@@ -14,6 +14,7 @@ class ConfigurationStateMixin(rx.State, mixin=True):
     controller_profile_rows: list[dict[str, Any]] = []
     controller_profile_notice: str = "No controller profiles configured yet."
     controller_profile_filter_text: str = ""
+    controller_profile_mapping_filter: str = "all"
     controller_profile_sort_key: str = "device_id"
     controller_profile_sort_desc: bool = False
     controller_profile_form_error: str = ""
@@ -41,6 +42,13 @@ class ConfigurationStateMixin(rx.State, mixin=True):
 
     def update_controller_profile_filter_text(self, value: str):
         self.controller_profile_filter_text = value
+        self._sync_controller_profile_rows()
+
+    def update_controller_profile_mapping_filter(self, value: str):
+        normalized = value.strip().lower()
+        if normalized not in {"all", "mapped", "unmapped"}:
+            return
+        self.controller_profile_mapping_filter = normalized
         self._sync_controller_profile_rows()
 
     def update_controller_profile_sort_key(self, value: str):
@@ -119,8 +127,12 @@ class ConfigurationStateMixin(rx.State, mixin=True):
             return []
 
         filtered_profiles = FleetService.filter_profiles(profiles, self.controller_profile_filter_text)
-        ordered_profiles = FleetService.sort_profiles(
+        visible_profiles = FleetService.filter_profiles_by_mapping(
             filtered_profiles,
+            self.controller_profile_mapping_filter,
+        )
+        ordered_profiles = FleetService.sort_profiles(
+            visible_profiles,
             self.controller_profile_sort_key,
             self.controller_profile_sort_desc,
         )
@@ -130,15 +142,16 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         )
         summary_suffix = ""
         query = self.controller_profile_filter_text.strip()
-        if query and profiles:
-            summary_suffix = f" Showing {len(filtered_profiles)} of {len(profiles)} controller profiles."
+        has_active_filters = bool(query) or self.controller_profile_mapping_filter != "all"
+        if has_active_filters and profiles:
+            summary_suffix = f" Showing {len(visible_profiles)} of {len(profiles)} controller profiles."
 
         if notice:
             self.controller_profile_notice = notice + summary_suffix
         elif not profiles:
             self.controller_profile_notice = "No controller profiles configured yet."
-        elif query and not filtered_profiles:
-            self.controller_profile_notice = f'No controller profiles match "{query}".'
+        elif has_active_filters and not visible_profiles:
+            self.controller_profile_notice = "No controller profiles match the current filters."
         else:
             suffix = "" if len(profiles) == 1 else "s"
             self.controller_profile_notice = f"{len(profiles)} controller profile{suffix} configured.{summary_suffix}"
