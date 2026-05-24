@@ -16,13 +16,11 @@ from ..services import (
     CommandSafetyService,
     CommandService,
     FleetService,
-    MaintenanceService,
-    OpsApiService,
     OperatorAuthService,
     PollingService,
-    scheduler_status,
 )
 from .event_state import EventStateMixin
+from .maintenance_state import MaintenanceStateMixin
 from .polling_state import PollingStateMixin
 
 
@@ -50,7 +48,7 @@ def _fleet_view_to_state_fields(refresh_view: FleetRefreshView) -> dict[str, Any
     }
 
 
-class TrafficState(PollingStateMixin, EventStateMixin, rx.State):
+class TrafficState(MaintenanceStateMixin, PollingStateMixin, EventStateMixin, rx.State):
     """Main app state."""
 
     m60_status: dict = {}
@@ -138,20 +136,8 @@ class TrafficState(PollingStateMixin, EventStateMixin, rx.State):
     pending_confirmation_notice: str = ""
     admin_recovery_key_input: str = ""
     admin_recovery_notice: str = ""
-    maintenance_notice: str = ""
     audit_export_notice: str = ""
     audit_export_path: str = ""
-    runtime_health_notice: str = "Runtime health not refreshed yet."
-    runtime_storage_summary: str = "Storage health not refreshed yet."
-    runtime_storage_warning_rows: list[str] = []
-    runtime_storage_alert_rows: list[str] = []
-    runtime_alert_dispatch_summary: str = "Alert dispatch idle."
-    retention_scheduler_enabled: bool = False
-    retention_scheduler_running: bool = False
-    retention_scheduler_interval_text: str = "unknown"
-    retention_scheduler_error: str = ""
-    last_retention_cleanup_at: str = ""
-    last_retention_cleanup_result: str = "No retention cleanup run yet."
     auto_refresh_enabled: bool = True
     refresh_interval_text: str = "5"
     auto_reconnect_enabled: bool = True
@@ -841,23 +827,6 @@ class TrafficState(PollingStateMixin, EventStateMixin, rx.State):
         self.admin_recovery_notice = "Login lockout reset by admin recovery key."
         self.error = ""
 
-    def run_retention_cleanup(self):
-        if not self._is_role_authorized({"admin"}):
-            self.maintenance_notice = "Retention cleanup denied: admin authentication required."
-            self.error = self.maintenance_notice
-            return
-        try:
-            MaintenanceService.run_retention_cleanup()
-            cleanup = MaintenanceService.get_cleanup_status()
-            self.maintenance_notice = str(
-                cleanup.get("message", "Retention cleanup complete.")
-            )
-            self.error = ""
-        except Exception as exc:
-            self.maintenance_notice = f"Retention cleanup failed: {exc}"
-            self.error = self.maintenance_notice
-        self.refresh_runtime_health()
-
     def export_audit_report(self):
         if not self._is_role_authorized({"admin"}):
             self.audit_export_notice = "Audit export denied: admin authentication required."
@@ -886,67 +855,6 @@ class TrafficState(PollingStateMixin, EventStateMixin, rx.State):
         except Exception as exc:
             self.audit_export_notice = f"Audit report export failed: {exc}"
             self.error = self.audit_export_notice
-
-    def refresh_runtime_health(self):
-        sched = scheduler_status()
-        self.retention_scheduler_enabled = bool(sched.get("enabled", False))
-        self.retention_scheduler_running = bool(sched.get("running", False))
-        interval = sched.get("interval_seconds")
-        self.retention_scheduler_interval_text = str(interval) if interval is not None else "unknown"
-        self.retention_scheduler_error = str(sched.get("error", "") or "")
-
-        cleanup = MaintenanceService.get_cleanup_status()
-        self.last_retention_cleanup_at = str(cleanup.get("last_run_at", ""))
-        self.last_retention_cleanup_result = str(
-            cleanup.get("message", "No retention cleanup run yet.")
-        )
-
-        scheduler_line = (
-            f"Scheduler: {'enabled' if self.retention_scheduler_enabled else 'disabled'}, "
-            f"{'running' if self.retention_scheduler_running else 'stopped'}, "
-            f"interval={self.retention_scheduler_interval_text}s"
-        )
-        if self.retention_scheduler_error:
-            scheduler_line = f"{scheduler_line} ({self.retention_scheduler_error})"
-
-        cleanup_at = self.last_retention_cleanup_at if self.last_retention_cleanup_at else "never"
-        ops_health = OpsApiService.health_snapshot()
-        storage = dict(ops_health.get("storage", {}))
-        counts = dict(storage.get("table_row_counts", {}))
-        self.runtime_storage_warning_rows = [str(row) for row in storage.get("warnings", [])]
-        self.runtime_storage_alert_rows = [str(row) for row in storage.get("persistent_alerts", [])]
-        dispatch = dict(storage.get("alert_dispatch", {}))
-        if dispatch:
-            self.runtime_alert_dispatch_summary = (
-                "Alert dispatch: "
-                f"enabled={bool(dispatch.get('enabled', False))}, "
-                f"sent={int(dispatch.get('sent', 0))}, "
-                f"skipped={int(dispatch.get('skipped', 0))}, "
-                f"failed={int(dispatch.get('failed', 0))}, "
-                f"deadlettered={int(dispatch.get('deadlettered', 0))}."
-            )
-        else:
-            self.runtime_alert_dispatch_summary = "Alert dispatch unavailable."
-        if counts:
-            ordered = ", ".join(f"{k}={int(v)}" for k, v in sorted(counts.items()))
-            self.runtime_storage_summary = f"Storage row counts: {ordered}"
-        else:
-            self.runtime_storage_summary = "Storage row counts unavailable."
-
-        storage_warning_text = (
-            f" Storage warnings: {len(self.runtime_storage_warning_rows)}."
-            if self.runtime_storage_warning_rows
-            else " Storage warnings: none."
-        )
-        storage_alert_text = (
-            f" Persistent alerts: {len(self.runtime_storage_alert_rows)}."
-            if self.runtime_storage_alert_rows
-            else " Persistent alerts: none."
-        )
-        self.runtime_health_notice = (
-            f"{scheduler_line}. Last cleanup: {cleanup_at}. "
-            f"{self.last_retention_cleanup_result}{storage_warning_text}{storage_alert_text}"
-        )
 
     async def confirm_pending_command(self):
         if not self.pending_command_type:

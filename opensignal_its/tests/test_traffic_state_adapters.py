@@ -3,6 +3,7 @@ import unittest
 from opensignal_its.models.event import AlarmDisplayRow, EventDisplayView, TimelineDisplayRow
 from opensignal_its.models.fleet import FleetDeviceStatus, FleetRefreshView, RuntimeRegistryView
 from opensignal_its.states.event_state import _event_view_to_state_fields
+from opensignal_its.states.maintenance_state import _runtime_health_snapshot_to_state_fields
 from opensignal_its.states.polling_state import _runtime_registry_view_to_state_fields
 from opensignal_its.states.traffic_state import TrafficState, _fleet_view_to_state_fields
 
@@ -100,6 +101,45 @@ class TrafficStateAdapterTests(unittest.TestCase):
         )
         self.assertEqual(["siemens_m60::a", "siemens_m60::b (polling)"], adapted["runtime_registry_rows"])
 
+    def test_runtime_health_snapshot_to_state_fields_maps_runtime_health(self):
+        adapted = _runtime_health_snapshot_to_state_fields(
+            {
+                "enabled": True,
+                "running": False,
+                "interval_seconds": 300,
+                "error": "clock drift",
+            },
+            {
+                "last_run_at": "2026-05-23T00:00:00+00:00",
+                "message": "Retention cleanup complete.",
+            },
+            {
+                "storage": {
+                    "table_row_counts": {"command_audit": 4, "status_snapshots": 9},
+                    "warnings": ["storage warning: command_audit high"],
+                    "persistent_alerts": ["storage alert: command_audit persisted"],
+                    "alert_dispatch": {
+                        "enabled": True,
+                        "sent": 1,
+                        "skipped": 2,
+                        "failed": 3,
+                        "deadlettered": 4,
+                    },
+                }
+            },
+        )
+
+        self.assertTrue(adapted["retention_scheduler_enabled"])
+        self.assertFalse(adapted["retention_scheduler_running"])
+        self.assertEqual("300", adapted["retention_scheduler_interval_text"])
+        self.assertEqual("clock drift", adapted["retention_scheduler_error"])
+        self.assertEqual(["storage warning: command_audit high"], adapted["runtime_storage_warning_rows"])
+        self.assertEqual(["storage alert: command_audit persisted"], adapted["runtime_storage_alert_rows"])
+        self.assertIn("enabled=True", adapted["runtime_alert_dispatch_summary"])
+        self.assertIn("command_audit=4", adapted["runtime_storage_summary"])
+        self.assertIn("Scheduler: enabled, stopped, interval=300s", adapted["runtime_health_notice"])
+
+
     def test_traffic_state_exposes_event_state_members(self):
         required = [
             "event_notice",
@@ -130,6 +170,28 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "stop_selected_managed_polling",
             "stop_fleet_managed_polling",
             "update_managed_polling_interval_text",
+        ]
+
+        missing = [name for name in required if not hasattr(TrafficState, name)]
+
+        self.assertEqual([], missing)
+
+    def test_traffic_state_exposes_maintenance_state_members(self):
+        required = [
+            "maintenance_notice",
+            "runtime_health_notice",
+            "runtime_storage_summary",
+            "runtime_storage_warning_rows",
+            "runtime_storage_alert_rows",
+            "runtime_alert_dispatch_summary",
+            "retention_scheduler_enabled",
+            "retention_scheduler_running",
+            "retention_scheduler_interval_text",
+            "retention_scheduler_error",
+            "last_retention_cleanup_at",
+            "last_retention_cleanup_result",
+            "run_retention_cleanup",
+            "refresh_runtime_health",
         ]
 
         missing = [name for name in required if not hasattr(TrafficState, name)]
