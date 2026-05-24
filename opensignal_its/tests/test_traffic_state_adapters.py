@@ -4,9 +4,11 @@ from unittest.mock import patch
 from opensignal_its.models.event import AlarmDisplayRow, EventDisplayView, TimelineDisplayRow
 from opensignal_its.models.fleet import FleetDeviceStatus, FleetRefreshView, RuntimeRegistryView
 from opensignal_its.states.auth_state import AuthStateMixin
+from opensignal_its.states.configuration_state import ConfigurationStateMixin
 from opensignal_its.states.event_state import _event_view_to_state_fields
 from opensignal_its.states.maintenance_state import _runtime_health_snapshot_to_state_fields
 from opensignal_its.states.polling_state import _runtime_registry_view_to_state_fields
+from opensignal_its.states.safety_state import SafetyStateMixin
 from opensignal_its.states.traffic_state import TrafficState, _fleet_view_to_state_fields
 
 
@@ -153,6 +155,45 @@ class TrafficStateAdapterTests(unittest.TestCase):
             self.assertEqual(1, AuthStateMixin._max_login_attempts())
             self.assertEqual(300, AuthStateMixin._login_lockout_seconds())
 
+    def test_safety_state_write_unlock_seconds_applies_bounds_and_fallbacks(self):
+        class _SafetyProbe(SafetyStateMixin):
+            write_unlock_seconds_text = "120"
+
+        probe = _SafetyProbe()
+        probe.write_unlock_seconds_text = "5"
+        self.assertEqual(15, probe._write_unlock_seconds())
+
+        probe.write_unlock_seconds_text = "bad"
+        self.assertEqual(120, probe._write_unlock_seconds())
+
+    def test_configuration_state_sync_controller_profile_rows_builds_notice_and_rows(self):
+        class _ConfigurationProbe(ConfigurationStateMixin):
+            device_profiles_json = """[
+                {
+                    "device_id": "int-1",
+                    "name": "Main & 1st",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.1",
+                    "port": 161,
+                    "community": "public",
+                    "snmp_version": "auto",
+                    "timeout_seconds": 3.0,
+                    "retries": 1
+                }
+            ]"""
+            controller_profile_filter_text = ""
+            controller_profile_sort_key = "device_id"
+            controller_profile_sort_desc = False
+            fleet_status_by_id = {}
+
+        probe = _ConfigurationProbe()
+
+        profiles = probe._sync_controller_profile_rows()
+
+        self.assertEqual(1, len(profiles))
+        self.assertEqual(1, len(probe.controller_profile_rows))
+        self.assertIn("1 controller profile configured.", probe.controller_profile_notice)
+
 
     def test_traffic_state_exposes_event_state_members(self):
         required = [
@@ -232,6 +273,79 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "reset_login_lockout",
             "_actor_name",
             "_is_role_authorized",
+        ]
+
+        missing = [name for name in required if not hasattr(TrafficState, name)]
+
+        self.assertEqual([], missing)
+
+    def test_traffic_state_exposes_safety_state_members(self):
+        required = [
+            "safe_command_probe",
+            "operator_key_input",
+            "write_unlock_seconds_text",
+            "write_unlock_until",
+            "write_mode_active",
+            "safety_notice",
+            "confirmation_input",
+            "pending_confirmation_token",
+            "pending_confirmation_expires",
+            "pending_command_type",
+            "pending_command_value_json",
+            "pending_confirmation_notice",
+            "update_safe_command_probe",
+            "update_operator_key_input",
+            "update_write_unlock_seconds_text",
+            "update_confirmation_input",
+            "unlock_write_mode",
+            "lock_write_mode",
+            "confirm_pending_command",
+            "_requires_confirmation",
+            "_start_command_confirmation",
+        ]
+
+        missing = [name for name in required if not hasattr(TrafficState, name)]
+
+        self.assertEqual([], missing)
+
+    def test_traffic_state_exposes_configuration_state_members(self):
+        required = [
+            "device_profiles_json",
+            "controller_profile_rows",
+            "controller_profile_notice",
+            "controller_profile_filter_text",
+            "controller_profile_sort_key",
+            "controller_profile_sort_desc",
+            "controller_profile_form_error",
+            "controller_profile_original_device_id",
+            "controller_profile_form_device_id",
+            "controller_profile_form_name",
+            "controller_profile_form_device_type",
+            "controller_profile_form_ip_address",
+            "controller_profile_form_port_text",
+            "controller_profile_form_community",
+            "controller_profile_form_snmp_version",
+            "controller_profile_form_timeout_text",
+            "controller_profile_form_retries_text",
+            "update_device_profiles_json",
+            "update_controller_profile_filter_text",
+            "update_controller_profile_sort_key",
+            "toggle_controller_profile_sort_direction",
+            "update_controller_profile_form_device_id",
+            "update_controller_profile_form_name",
+            "update_controller_profile_form_device_type",
+            "update_controller_profile_form_ip_address",
+            "update_controller_profile_form_port_text",
+            "update_controller_profile_form_community",
+            "update_controller_profile_form_snmp_version",
+            "update_controller_profile_form_timeout_text",
+            "update_controller_profile_form_retries_text",
+            "new_controller_profile",
+            "load_controller_profile",
+            "load_controller_profile_from_row",
+            "save_controller_profile",
+            "delete_controller_profile",
+            "open_selected_controller_status",
         ]
 
         missing = [name for name in required if not hasattr(TrafficState, name)]
