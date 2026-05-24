@@ -33,6 +33,24 @@ class AlarmDisplayRow(BaseModel):
     raw: str = ""
 
 
+class AlarmHistoryDisplayRow(BaseModel):
+    timestamp: str = ""
+    action: str = "unknown"
+    action_label: str = "Unknown"
+    action_scheme: str = "gray"
+    actor: str = "unknown"
+    alarm_key: str = ""
+    severity: str = "unknown"
+    severity_label: str = "Unknown"
+    severity_scheme: str = "gray"
+    alarm_type: str = "unknown"
+    summary: str = "Alarm"
+    device_ip: str = "unknown"
+    detail: str = ""
+    note: str = ""
+    raw: str = ""
+
+
 class EventDisplayView(BaseModel):
     timeline: list[TimelineDisplayRow] = Field(default_factory=list)
     alarms: list[AlarmDisplayRow] = Field(default_factory=list)

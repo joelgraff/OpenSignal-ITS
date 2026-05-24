@@ -1,7 +1,7 @@
 import reflex as rx
 
 from ...states.traffic_state import TrafficState
-from .event_rows import alarm_display_row, timeline_display_row
+from .event_rows import alarm_display_row, alarm_history_display_row, timeline_display_row
 from .section_card import workspace_section_card
 
 
@@ -181,9 +181,13 @@ def analytics_workspace_section() -> rx.Component:
                         rx.box(
                             rx.cond(
                                 TrafficState.alarm_history_rows != [],
-                                rx.foreach(
-                                    TrafficState.alarm_history_rows,
-                                    lambda row: rx.text(row, size="1", color="gray"),
+                                rx.vstack(
+                                    rx.foreach(
+                                        TrafficState.alarm_history_rows,
+                                        lambda row: alarm_history_display_row(row),
+                                    ),
+                                    spacing="2",
+                                    width="100%",
                                 ),
                                 rx.text("No alarm action history.", size="1", color="gray"),
                             ),

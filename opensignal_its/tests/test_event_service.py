@@ -378,6 +378,33 @@ class EventServiceTests(unittest.TestCase):
         self.assertEqual("Silenced", view.silenced_alarms[0].state_label)
         self.assertIn("SILENCED by alice:admin", view.silenced_alarms[0].state_detail)
 
+    def test_build_alarm_history_display_rows_structures_history_rows(self):
+        rows = [
+            (
+                "[2026-01-01T00:03:00+00:00] ALARM_EVENT acknowledge actor=alice:admin "
+                "key=ALARM severity=critical type=offline-streak device=10.0.0.1 threshold=2 note=Investigating cabinet"
+            ),
+            (
+                "[2026-01-01T00:04:00+00:00] ALARM_EVENT clear_silence actor=bob:admin "
+                "key=ALARM severity=high type=command-failure-streak device=10.0.0.2 threshold=3"
+            ),
+        ]
+
+        history = event_service.EventService.build_alarm_history_display_rows(rows)
+
+        self.assertEqual("Ack", history[0].action_label)
+        self.assertEqual("Critical", history[0].severity_label)
+        self.assertEqual("Offline Streak", history[0].summary)
+        self.assertEqual("10.0.0.1", history[0].device_ip)
+        self.assertIn("Actor alice:admin", history[0].detail)
+        self.assertIn("Threshold 2", history[0].detail)
+        self.assertEqual("Investigating cabinet", history[0].note)
+
+        self.assertEqual("Clear Silence", history[1].action_label)
+        self.assertEqual("High", history[1].severity_label)
+        self.assertEqual("Command Failure Streak", history[1].summary)
+        self.assertEqual("", history[1].note)
+
 
 if __name__ == "__main__":
     unittest.main()

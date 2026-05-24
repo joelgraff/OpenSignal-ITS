@@ -63,6 +63,12 @@ def _event_view_to_state_fields(event_view: EventDisplayView) -> dict[str, Any]:
     }
 
 
+def _alarm_history_rows_to_state_fields(rows: list[dict[str, str]]) -> dict[str, Any]:
+    return {
+        "alarm_history_rows": rows,
+    }
+
+
 class TrafficState(rx.State):
     """Main app state."""
 
@@ -135,7 +141,7 @@ class TrafficState(rx.State):
     alarm_rows: list[dict[str, str]] = []
     acknowledged_alarm_rows: list[dict[str, str]] = []
     silenced_alarm_rows: list[dict[str, str]] = []
-    alarm_history_rows: list[str] = []
+    alarm_history_rows: list[dict[str, str]] = []
     alarm_history_action_filter: str = "all"
     alarm_history_actor_filter: str = ""
     alarm_history_key_filter: str = ""
@@ -1131,12 +1137,19 @@ class TrafficState(rx.State):
             self.alarm_rows = adapted["alarm_rows"]
             self.acknowledged_alarm_rows = adapted["acknowledged_alarm_rows"]
             self.silenced_alarm_rows = adapted["silenced_alarm_rows"]
-            self.alarm_history_rows = EventService.list_alarm_history_rows(
+            history_rows = EventService.list_alarm_history_rows(
                 limit=self._alarm_history_limit(),
                 action_filter=self.alarm_history_action_filter,
                 actor_contains=self.alarm_history_actor_filter,
                 key_contains=self.alarm_history_key_filter,
             )
+            history_adapted = _alarm_history_rows_to_state_fields(
+                [
+                    row.model_dump(mode="json")
+                    for row in EventService.build_alarm_history_display_rows(history_rows)
+                ]
+            )
+            self.alarm_history_rows = history_adapted["alarm_history_rows"]
             self.event_notice = (
                 f"Timeline refreshed ({self.event_window}): {len(self.event_timeline_rows)} entries, "
                 f"{len(self.alarm_rows)} active alarms, "

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..db import STORE
-from ..models.event import AlarmDisplayRow, EventDisplayView, TimelineDisplayRow
+from ..models.event import AlarmDisplayRow, AlarmHistoryDisplayRow, EventDisplayView, TimelineDisplayRow
 
 
 def _parse_iso(ts: str) -> datetime:
@@ -95,6 +95,16 @@ def _extract_token_value(text: str, token: str) -> str:
     if not value:
         return ""
     return value.split(" ", 1)[0].strip()
+
+
+def _extract_between(text: str, start_token: str, end_token: str = "") -> str:
+    _prefix, separator, suffix = text.partition(start_token)
+    if not separator:
+        return ""
+    if not end_token:
+        return suffix.strip()
+    value, _separator, _remainder = suffix.partition(end_token)
+    return value.strip()
 
 
 class EventService:
@@ -471,3 +481,63 @@ class EventService:
             suffix = f" note={note}" if note else ""
             rows.append(f"[{ts}] ALARM_EVENT {action} actor={actor} key={key}{suffix}")
         return rows
+
+    @staticmethod
+    def build_alarm_history_display_rows(rows: list[str]) -> list[AlarmHistoryDisplayRow]:
+        return [EventService._build_alarm_history_display_row(row) for row in rows]
+
+    @staticmethod
+    def _build_alarm_history_display_row(row: str) -> AlarmHistoryDisplayRow:
+        raw = row.strip()
+        timestamp = ""
+        remainder = raw
+        if raw.startswith("[") and "] " in raw:
+            timestamp, remainder = raw[1:].split("] ", 1)
+
+        tokens = remainder.split()
+        action = tokens[1] if len(tokens) > 1 else "unknown"
+        actor = _extract_between(remainder, " actor=", " key=") or "unknown"
+        note = _extract_between(remainder, " note=")
+        alarm_key = _extract_between(remainder, " key=", " note=") or _extract_between(
+            remainder,
+            " key=",
+        )
+        alarm_tokens = _alarm_tokens(alarm_key)
+        severity = alarm_tokens.get("severity", "unknown")
+        alarm_type = alarm_tokens.get("type", "unknown")
+        threshold = alarm_tokens.get("threshold", "")
+
+        action_label_map = {
+            "acknowledge": "Ack",
+            "clear_acknowledgement": "Clear Ack",
+            "silence": "Silence",
+            "clear_silence": "Clear Silence",
+        }
+        action_scheme_map = {
+            "acknowledge": "green",
+            "clear_acknowledgement": "gray",
+            "silence": "orange",
+            "clear_silence": "gray",
+        }
+
+        detail_parts = [f"Actor {actor}"]
+        if threshold:
+            detail_parts.append(f"Threshold {threshold}")
+
+        return AlarmHistoryDisplayRow(
+            timestamp=timestamp,
+            action=action,
+            action_label=action_label_map.get(action, _display_label(action, "Unknown")),
+            action_scheme=action_scheme_map.get(action, "gray"),
+            actor=actor,
+            alarm_key=alarm_key,
+            severity=severity,
+            severity_label=_display_label(severity, "Unknown"),
+            severity_scheme=_status_scheme(severity),
+            alarm_type=alarm_type,
+            summary=_display_label(alarm_type, "Alarm"),
+            device_ip=alarm_tokens.get("device", "unknown"),
+            detail=" | ".join(detail_parts),
+            note=note,
+            raw=row,
+        )
