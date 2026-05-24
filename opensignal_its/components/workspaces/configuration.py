@@ -54,15 +54,27 @@ def _controller_profile_roster() -> rx.Component:
                     rx.foreach(
                         TrafficState.controller_profile_rows,
                         lambda row: rx.button(
-                            rx.hstack(
-                                rx.badge(
-                                    row["status_label"],
-                                    color_scheme=row["status_scheme"],
-                                    size="1",
+                            rx.vstack(
+                                rx.hstack(
+                                    rx.badge(
+                                        row["status_label"],
+                                        color_scheme=row["status_scheme"],
+                                        size="1",
+                                    ),
+                                    rx.text(row["label"], size="1", text_align="left"),
+                                    spacing="2",
+                                    align="center",
+                                    width="100%",
                                 ),
-                                rx.text(row["label"], size="1", text_align="left"),
-                                spacing="2",
-                                align="center",
+                                rx.hstack(
+                                    rx.text(row["detail_text"], size="1", color="gray"),
+                                    rx.spacer(),
+                                    rx.text(row["updated_text"], size="1", color="gray"),
+                                    width="100%",
+                                    align="center",
+                                ),
+                                spacing="1",
+                                align="start",
                                 width="100%",
                             ),
                             on_click=lambda: TrafficState.load_controller_profile_from_row(row["device_id"]),

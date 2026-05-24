@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from ipaddress import ip_address
 import json
 from typing import Any, Awaitable, Callable
@@ -187,9 +188,29 @@ class FleetService:
                     "label": FleetService.format_profile_row(normalized),
                     "status_label": status_label,
                     "status_scheme": status_scheme,
+                    "detail_text": str(
+                        status_payload.get(
+                            "status_text",
+                            "No poll data yet." if status_label == "Unknown" else "No status detail.",
+                        )
+                    ),
+                    "updated_text": FleetService.format_status_timestamp(
+                        str(status_payload.get("timestamp", ""))
+                    ),
                 }
             )
         return rows
+
+    @staticmethod
+    def format_status_timestamp(timestamp: str) -> str:
+        raw = timestamp.strip()
+        if not raw:
+            return ""
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            return f"Updated {parsed.isoformat(timespec='seconds').replace('T', ' ')}"
+        except ValueError:
+            return f"Updated {raw}"
 
     @staticmethod
     def filter_profiles(

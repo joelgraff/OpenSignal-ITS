@@ -130,10 +130,38 @@ class FleetServiceTests(unittest.TestCase):
 
         self.assertEqual("Online", rows[0]["status_label"])
         self.assertEqual("green", rows[0]["status_scheme"])
+        self.assertEqual("No status detail.", rows[0]["detail_text"])
+        self.assertEqual("", rows[0]["updated_text"])
         self.assertEqual("Offline", rows[1]["status_label"])
         self.assertEqual("red", rows[1]["status_scheme"])
+        self.assertEqual("No status detail.", rows[1]["detail_text"])
+        self.assertEqual("", rows[1]["updated_text"])
         self.assertEqual("Unknown", rows[2]["status_label"])
         self.assertEqual("gray", rows[2]["status_scheme"])
+        self.assertEqual("No poll data yet.", rows[2]["detail_text"])
+        self.assertEqual("", rows[2]["updated_text"])
+
+    def test_build_profile_display_rows_uses_status_text_when_present(self):
+        profiles = [{"device_id": "int-1", "device_type": "siemens_m60", "ip_address": "10.0.0.1"}]
+        status_map = {"int-1": {"is_online": True, "status_text": "Pattern 2 | Unit Free"}}
+
+        rows = FleetService.build_profile_display_rows(profiles, status_map)
+
+        self.assertEqual("Pattern 2 | Unit Free", rows[0]["detail_text"])
+
+    def test_build_profile_display_rows_formats_timestamp_when_present(self):
+        profiles = [{"device_id": "int-1", "device_type": "siemens_m60", "ip_address": "10.0.0.1"}]
+        status_map = {
+            "int-1": {
+                "is_online": True,
+                "status_text": "Pattern 2 | Unit Free",
+                "timestamp": "2026-05-23T12:34:56+00:00",
+            }
+        }
+
+        rows = FleetService.build_profile_display_rows(profiles, status_map)
+
+        self.assertEqual("Updated 2026-05-23 12:34:56+00:00", rows[0]["updated_text"])
 
     def test_build_profile_from_form_validates_and_normalizes(self):
         profile = FleetService.build_profile_from_form(
