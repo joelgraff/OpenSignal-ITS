@@ -8,13 +8,14 @@ Use these labels as the canonical set for current UI and documentation.
 
 | Area | Final Label |
 |---|---|
-| Monitor tab | Controller Status |
+| Monitor tab | Overview |
 | Control tab | Signal Control |
 | Operations tab | Maintenance |
 | Analytics tab | Alarms & Events |
 | Configuration tab | Controllers |
 | Admin tab | Access |
-| Monitor page title | Controller Status |
+| Monitor page title | Network Overview |
+| Monitor detail title | Intersection Detail |
 | Configuration page title | Controllers |
 | Access page title | Access |
 | Selected target field | Selected Controller |
@@ -26,8 +27,8 @@ Use these labels as the canonical set for current UI and documentation.
 |---|---|---|
 | Use Controllers instead of Site/Fleet terminology | Adopted | Implemented across tabs, page titles, and notices. |
 | Keep Alarms visible and operator-focused | Adopted | Alarms & Events remains a primary tab. |
-| Intersection Detail page as primary screen | Deferred | Current build uses controller status workspace; detail-page redesign is future IA work. |
-| Dashboard map as first screen | Deferred | Not implemented yet; current dashboard is card/workspace based. |
+| Intersection Detail page as primary screen | Partially adopted | Overview remains the landing workspace; selecting a controller opens an Intersection Detail view within the same workflow. |
+| Dashboard map as first screen | Partially adopted | The Overview landing workspace now includes a map-style controller panel that can be upgraded later to full GIS mapping. |
 | Cabinet equipment section (video, battery, power) | Deferred | Requires new data model/integrations. |
 | Raw Data and Advanced separation | Deferred | Planned for future UX simplification phase. |
 | Replace write-mode wording with Unlock Controls | Deferred | Current safety model preserved to avoid operational ambiguity during hardening. |
@@ -71,8 +72,8 @@ Compact summary of active pattern, unit state, protocol mode, and inventory tota
 
 ## Workspace Tabs
 
-- Controller Status:
-Choose target controllers, configure connection/polling, and inspect live status.
+- Overview:
+Choose target controllers, review fleet-level status, and open intersection detail.
 - Signal Control:
 Perform command operations with safety guardrails.
 - Maintenance:
@@ -84,8 +85,12 @@ Manage configured controller profile records.
 - Access:
 Sign in, sign out, and run admin lockout recovery actions.
 
-## Controller Status Workspace
+## Overview Workspace
 
+- Network Overview:
+Landing page for fleet summary, controller map, and controller list.
+- Intersection Detail:
+Drill-in page for one selected controller, including live phase state and command-adjacent diagnostics.
 - Controller Connection & Polling:
 Connection and polling controls for selected controller targets.
 - Controller IP:

@@ -1,4 +1,4 @@
-"""Controller Status workspace.
+"""Overview workspace.
 
 Two-view workflow driven by ``TrafficState.monitor_view``:
 
@@ -173,7 +173,7 @@ def _dashboard_view() -> rx.Component:
                 title="Controllers",
                 body=_dashboard_controller_list(),
             ),
-            template_columns="2fr 1fr",
+            template_columns="repeat(auto-fit, minmax(320px, 1fr))",
             spacing="2",
             width="100%",
         ),
@@ -190,7 +190,7 @@ def _dashboard_view() -> rx.Component:
 def _intersection_breadcrumb() -> rx.Component:
     return rx.hstack(
         rx.button(
-            "\u2190 Dashboard",
+            "\u2190 Overview",
             on_click=TrafficState.back_to_dashboard,
             size="1",
             variant="ghost",
@@ -515,7 +515,7 @@ def _intersection_view() -> rx.Component:
                 title="Control Panel",
                 body=_intersection_control_panel(),
             ),
-            template_columns="2fr 1fr",
+            template_columns="repeat(auto-fit, minmax(320px, 1fr))",
             spacing="2",
             width="100%",
         ),
@@ -535,11 +535,15 @@ def _intersection_view() -> rx.Component:
 
 def monitor_workspace_page() -> rx.Component:
     return workspace_page_frame(
-        title="Controller Status",
+        title=rx.cond(
+            TrafficState.monitor_view == "dashboard",
+            "Network Overview",
+            "Intersection Detail",
+        ),
         subtitle=rx.cond(
             TrafficState.monitor_view == "dashboard",
-            "Dashboard - select a controller to investigate.",
-            "Intersection detail - return to the dashboard at any time.",
+            "Select a controller to investigate live status and alarms.",
+            "Return to overview at any time while keeping the current controller target.",
         ),
         body=rx.cond(
             TrafficState.monitor_view == "dashboard",

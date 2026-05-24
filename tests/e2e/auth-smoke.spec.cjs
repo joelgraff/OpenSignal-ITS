@@ -16,7 +16,8 @@ test('auth gate and workspace navigation stay functional', async ({ page }) => {
   await page.getByRole('button', { name: 'Sign In' }).click();
 
   await expect(page.getByText('ROLE ADMIN')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Controller Status' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Overview' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Network Overview' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Signal Control' }).click();
   await expect(page.getByRole('heading', { name: 'Signal Control' })).toBeVisible();

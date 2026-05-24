@@ -232,10 +232,10 @@ class ConfigurationStateMixin(rx.State, mixin=True):
     def open_selected_controller_status(self):
         target = self.controller_profile_form_device_id.strip() or self.controller_profile_original_device_id.strip()
         if not target:
-            self.controller_profile_notice = "Save or load a controller profile before opening Controller Status."
+            self.controller_profile_notice = "Save or load a controller profile before opening Overview."
             return
 
         self.selected_device_id = target
         self.ui_workspace_mode = "monitor"
         self.monitor_view = "intersection"
-        self.controller_profile_notice = f"Opened Controller Status for {target}."
+        self.controller_profile_notice = f"Opened Overview for {target}."

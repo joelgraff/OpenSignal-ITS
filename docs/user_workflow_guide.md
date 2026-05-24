@@ -17,7 +17,7 @@ Open → See status at a glance → Click to investigate → Take safe action wh
 
 The project now uses controller-centric naming consistently:
 
-- Controller Status
+- Overview
 - Controllers
 - Access
 - Alarms & Events
@@ -34,17 +34,17 @@ Authoritative label decisions and disposition of proposed alternatives are maint
 
 ### 2. Main Dashboard (High-Level Overview)
 - Top status bar showing selected controller, online/offline state, alarm count, and last update.
-- Workspace tabs for **Controller Status**, **Signal Control**, **Maintenance**, **Alarms & Events**, **Controllers**, and **Access**.
+- Workspace tabs for **Overview**, **Signal Control**, **Maintenance**, **Alarms & Events**, **Controllers**, and **Access**.
 - Quick path to **Controllers** for profile management.
 
 **Reference:** See [ui-label-glossary.md](ui-label-glossary.md) for definitions of status indicators and summary fields.
 
 ### 3. Investigate an Intersection
 - Select a controller from the controller list/profile set.
-- Review live state and polling output in **Controller Status**.
+- Review fleet state in **Overview**, then open **Intersection Detail** for the selected controller.
 
 ### 4. Intersection Detail Page
-The current **Controller Status** workspace provides day-to-day operations:
+Selecting a controller from **Overview** opens **Intersection Detail**, which provides day-to-day operations:
 
 - **Header**: Controller identity, current pattern, overall status.
 - **Live Phase Diagram** (visual): Shows real-time phase indications mapped to actual movements.
@@ -78,5 +78,5 @@ The current **Controller Status** workspace provides day-to-day operations:
 ---
 
 **Document Status**: Draft v2  
-**Last Updated**: 2026-05-23  
+**Last Updated**: 2026-05-24  
 **Intended Audience**: Developers, new users, and stakeholders

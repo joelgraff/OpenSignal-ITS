@@ -30,7 +30,7 @@ def _workspace_tab_button(label: str, mode: str) -> rx.Component:
 def workspace_tabs() -> rx.Component:
     return rx.box(
         rx.hstack(
-            _workspace_tab_button("Controller Status", "monitor"),
+            _workspace_tab_button("Overview", "monitor"),
             _workspace_tab_button("Signal Control", "control"),
             _workspace_tab_button("Maintenance", "operations"),
             _workspace_tab_button("Alarms & Events", "analytics"),
