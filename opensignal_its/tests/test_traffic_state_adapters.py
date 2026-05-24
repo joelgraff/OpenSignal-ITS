@@ -44,6 +44,9 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual("int-1", adapted["selected_device_id"])
         self.assertEqual(["int-1 [siemens_m60] ONLINE - ok"], adapted["fleet_device_rows"])
         self.assertIn("int-1", adapted["fleet_status_by_id"])
+        self.assertEqual(1, len(adapted["fleet_status_cards"]))
+        self.assertEqual("int-1", adapted["fleet_status_cards"][0]["device_id"])
+        self.assertEqual("Online", adapted["fleet_status_cards"][0]["status_label"])
         self.assertTrue(bool(adapted["selected_payload"]))
         self.assertEqual(1, int(adapted["selected_mp_model"]))
 
@@ -55,6 +58,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual("", adapted["selected_device_id"])
         self.assertEqual([], adapted["fleet_device_rows"])
         self.assertEqual({}, adapted["fleet_status_by_id"])
+        self.assertEqual([], adapted["fleet_status_cards"])
         self.assertIsNone(adapted["selected_payload"])
         self.assertEqual(1, int(adapted["selected_mp_model"]))
         self.assertEqual("siemens_m60", adapted["selected_device_type"])
@@ -427,6 +431,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "controller_profile_original_device_id",
             "controller_profile_form_device_id",
             "controller_profile_form_name",
+            "controller_profile_form_location_name",
             "controller_profile_form_device_type",
             "controller_profile_form_ip_address",
             "controller_profile_form_port_text",
@@ -434,12 +439,15 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "controller_profile_form_snmp_version",
             "controller_profile_form_timeout_text",
             "controller_profile_form_retries_text",
+            "controller_profile_form_latitude_text",
+            "controller_profile_form_longitude_text",
             "update_device_profiles_json",
             "update_controller_profile_filter_text",
             "update_controller_profile_sort_key",
             "toggle_controller_profile_sort_direction",
             "update_controller_profile_form_device_id",
             "update_controller_profile_form_name",
+            "update_controller_profile_form_location_name",
             "update_controller_profile_form_device_type",
             "update_controller_profile_form_ip_address",
             "update_controller_profile_form_port_text",
@@ -447,6 +455,8 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "update_controller_profile_form_snmp_version",
             "update_controller_profile_form_timeout_text",
             "update_controller_profile_form_retries_text",
+            "update_controller_profile_form_latitude_text",
+            "update_controller_profile_form_longitude_text",
             "new_controller_profile",
             "load_controller_profile",
             "load_controller_profile_from_row",
@@ -492,6 +502,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "open_intersection_detail",
             "back_to_dashboard",
             "select_controller_from_row",
+            "select_controller_from_map_points",
             "_build_config",
             "_selected_device_target",
             "_apply_phase_payload",
@@ -528,6 +539,13 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "fleet_status_summary",
             "fleet_device_rows",
             "fleet_status_by_id",
+            "fleet_status_cards",
+            "fleet_map_markers",
+            "fleet_unmapped_device_ids",
+            "fleet_map_data",
+            "fleet_map_layout",
+            "fleet_map_figure",
+            "fleet_map_notice",
             "fleet_online_count",
             "fleet_offline_count",
             "fleet_total_count",
@@ -543,6 +561,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "_refresh_interval_seconds",
             "_reconnect_interval_seconds",
             "_fleet_profiles",
+            "_refresh_fleet_map_fields",
             "_refresh_fleet_aggregate_fields",
             "_cache_device_status",
             "refresh_fleet_status",

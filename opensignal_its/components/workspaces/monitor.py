@@ -13,6 +13,8 @@ view. The intersection view has a breadcrumb to return to the dashboard.
 """
 
 import reflex as rx
+from plotly.graph_objs import Figure
+from reflex_components_plotly import plotly as plotly_component
 
 from ...components.phase_status import phase_status_grid
 from ...states import TrafficState
@@ -90,28 +92,103 @@ def _dashboard_map_panel() -> rx.Component:
     return rx.box(
         rx.vstack(
             rx.hstack(
-                rx.text("Network overview", size="1", color="#1f2937", font_weight="600"),
+                rx.text("Signal map", size="1", color="#1f2937", font_weight="600"),
                 rx.spacer(),
-                rx.badge("Online", color_scheme="green", size="1"),
-                rx.badge("Offline", color_scheme="red", size="1"),
-                rx.badge("Alarm", color_scheme="orange", size="1"),
+                rx.badge(f"Mapped {TrafficState.fleet_map_markers.length()}", color_scheme="indigo", size="1"),
+                rx.badge(
+                    f"Need Coordinates {TrafficState.fleet_unmapped_device_ids.length()}",
+                    color_scheme="amber",
+                    size="1",
+                ),
                 spacing="1",
                 width="100%",
                 align="center",
             ),
-            rx.box(
-                rx.cond(
-                    TrafficState.fleet_device_rows != [],
-                    rx.foreach(
-                        TrafficState.fleet_device_rows,
-                        lambda row: rx.badge(row, size="1", variant="surface"),
-                    ),
-                    rx.text("No controllers loaded yet.", size="1", color="gray"),
+            rx.cond(
+                TrafficState.fleet_map_data != [],
+                plotly_component.mapbox(
+                    data=TrafficState.fleet_map_figure.to(Figure),
+                    config={
+                        "displayModeBar": False,
+                        "responsive": True,
+                        "scrollZoom": True,
+                    },
+                    on_click=TrafficState.select_controller_from_map_points,
+                    use_resize_handler=True,
+                    width="100%",
+                    height="360px",
                 ),
-                display="flex",
-                flex_wrap="wrap",
-                gap="6px",
-                width="100%",
+                rx.cond(
+                    TrafficState.fleet_unmapped_device_ids != [],
+                    rx.center(
+                        rx.vstack(
+                            rx.heading("Add coordinates to place controllers on the map.", size="4"),
+                            rx.text(
+                                TrafficState.fleet_map_notice,
+                                size="1",
+                                color="gray",
+                                text_align="center",
+                            ),
+                            rx.box(
+                                rx.foreach(
+                                    TrafficState.fleet_unmapped_device_ids,
+                                    lambda device_id: rx.badge(device_id, color_scheme="gray", size="1"),
+                                ),
+                                display="flex",
+                                flex_wrap="wrap",
+                                gap="6px",
+                                justify_content="center",
+                                width="100%",
+                            ),
+                            spacing="2",
+                            align="center",
+                            width="100%",
+                        ),
+                        min_height="360px",
+                        width="100%",
+                        border_radius="12px",
+                        border="1px dashed #93c5fd",
+                        background="rgba(255, 255, 255, 0.72)",
+                        padding="4",
+                    ),
+                    rx.center(
+                        rx.text(
+                            TrafficState.fleet_map_notice,
+                            size="1",
+                            color="gray",
+                            text_align="center",
+                        ),
+                        min_height="360px",
+                        width="100%",
+                        border_radius="12px",
+                        border="1px dashed #93c5fd",
+                        background="rgba(255, 255, 255, 0.72)",
+                        padding="4",
+                    ),
+                ),
+            ),
+            rx.cond(
+                TrafficState.fleet_unmapped_device_ids != [],
+                rx.vstack(
+                    rx.text(
+                        "Awaiting coordinates",
+                        size="1",
+                        color="gray",
+                    ),
+                    rx.box(
+                        rx.foreach(
+                            TrafficState.fleet_unmapped_device_ids,
+                            lambda device_id: rx.badge(device_id, color_scheme="gray", size="1", variant="soft"),
+                        ),
+                        display="flex",
+                        flex_wrap="wrap",
+                        gap="6px",
+                        width="100%",
+                    ),
+                    width="100%",
+                    spacing="1",
+                ),
+                rx.fragment(),
             ),
             spacing="2",
             width="100%",
@@ -128,19 +205,58 @@ def _dashboard_map_panel() -> rx.Component:
 def _dashboard_controller_list() -> rx.Component:
     return rx.vstack(
         rx.text(
-            "Select a controller to open its intersection detail.",
+            "Select a controller to open its intersection detail and poll focus.",
             size="1",
             color="gray",
         ),
         rx.cond(
-            TrafficState.fleet_device_rows != [],
+            TrafficState.fleet_status_cards != [],
             rx.box(
                 rx.foreach(
-                    TrafficState.fleet_device_rows,
+                    TrafficState.fleet_status_cards,
                     lambda row: rx.button(
-                        row,
-                        on_click=lambda: TrafficState.select_controller_from_row(row),
-                        variant="ghost",
+                        rx.vstack(
+                            rx.vstack(
+                                rx.text(row["title"], size="1", font_weight="600", text_align="left"),
+                                rx.text(row["subtitle"], size="1", color="gray", text_align="left"),
+                                spacing="0",
+                                align="start",
+                                width="100%",
+                            ),
+                            rx.hstack(
+                                rx.badge(
+                                    row["status_label"],
+                                    color_scheme=row["status_scheme"],
+                                    size="1",
+                                    variant="soft",
+                                ),
+                                rx.badge(
+                                    row["mapping_label"],
+                                    color_scheme=row["mapping_scheme"],
+                                    size="1",
+                                    variant="soft",
+                                ),
+                                rx.spacer(),
+                                rx.text(row["coordinate_text"], size="1", color="gray"),
+                                width="100%",
+                                align="center",
+                                spacing="2",
+                            ),
+                            width="100%",
+                            spacing="1",
+                            align="start",
+                        ),
+                        on_click=lambda: TrafficState.select_controller_from_row(row["device_id"]),
+                        variant=rx.cond(
+                            row["device_id"] == TrafficState.selected_device_id,
+                            "soft",
+                            "ghost",
+                        ),
+                        color_scheme=rx.cond(
+                            row["device_id"] == TrafficState.selected_device_id,
+                            "indigo",
+                            "gray",
+                        ),
                         width="100%",
                         justify_content="start",
                         size="1",
@@ -166,12 +282,14 @@ def _dashboard_view() -> rx.Component:
         ),
         rx.grid(
             workspace_section_card(
-                title="Controller Map",
+                title="Signal Map",
                 body=_dashboard_map_panel(),
+                subtitle="Controllers with stored coordinates appear on the map. Click a marker to open intersection detail.",
             ),
             workspace_section_card(
                 title="Controllers",
                 body=_dashboard_controller_list(),
+                subtitle="Use friendly location labels, mapping status, and coordinates to choose the right controller quickly.",
             ),
             template_columns="repeat(auto-fit, minmax(320px, 1fr))",
             spacing="2",

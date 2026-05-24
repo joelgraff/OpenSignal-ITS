@@ -65,6 +65,9 @@ class MonitorStateMixin(rx.State, mixin=True):
 
     def update_selected_device_id(self, value: str):
         self.selected_device_id = value
+        refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
+        if callable(refresh_map):
+            refresh_map()
 
     def update_timeout_text(self, value: str):
         self.timeout_text = value
@@ -93,6 +96,33 @@ class MonitorStateMixin(rx.State, mixin=True):
         if tokenized:
             self.selected_device_id = tokenized[0]
             self.monitor_view = "intersection"
+            refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
+            if callable(refresh_map):
+                refresh_map()
+
+    def select_controller_from_map_points(self, points: list[dict[str, Any]]):
+        if not points:
+            return
+
+        first = dict(points[0])
+        try:
+            point_number = int(first.get("pointNumber", -1))
+        except (TypeError, ValueError):
+            return
+
+        if point_number < 0 or point_number >= len(self.fleet_map_markers):
+            return
+
+        marker = dict(self.fleet_map_markers[point_number])
+        device_id = str(marker.get("device_id", "")).strip()
+        if not device_id:
+            return
+
+        self.selected_device_id = device_id
+        self.monitor_view = "intersection"
+        refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
+        if callable(refresh_map):
+            refresh_map()
 
     def _build_config(self) -> DeviceConfig:
         port = int(self.port_text)

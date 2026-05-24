@@ -20,6 +20,7 @@ class ConfigurationStateMixin(rx.State, mixin=True):
     controller_profile_original_device_id: str = ""
     controller_profile_form_device_id: str = ""
     controller_profile_form_name: str = ""
+    controller_profile_form_location_name: str = ""
     controller_profile_form_device_type: str = FleetService.DEFAULT_DEVICE_TYPE
     controller_profile_form_ip_address: str = ""
     controller_profile_form_port_text: str = "161"
@@ -27,11 +28,16 @@ class ConfigurationStateMixin(rx.State, mixin=True):
     controller_profile_form_snmp_version: str = "auto"
     controller_profile_form_timeout_text: str = "3"
     controller_profile_form_retries_text: str = "1"
+    controller_profile_form_latitude_text: str = ""
+    controller_profile_form_longitude_text: str = ""
 
     def update_device_profiles_json(self, value: str):
         self.device_profiles_json = value
         self.controller_profile_form_error = ""
         self._sync_controller_profile_rows()
+        refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
+        if callable(refresh_map):
+            refresh_map()
 
     def update_controller_profile_filter_text(self, value: str):
         self.controller_profile_filter_text = value
@@ -39,7 +45,7 @@ class ConfigurationStateMixin(rx.State, mixin=True):
 
     def update_controller_profile_sort_key(self, value: str):
         normalized = value.strip().lower()
-        if normalized not in {"device_id", "name", "ip_address"}:
+        if normalized not in {"device_id", "name", "location_name", "ip_address"}:
             return
         if self.controller_profile_sort_key == normalized:
             self.controller_profile_sort_desc = not self.controller_profile_sort_desc
@@ -57,6 +63,9 @@ class ConfigurationStateMixin(rx.State, mixin=True):
 
     def update_controller_profile_form_name(self, value: str):
         self.controller_profile_form_name = value
+
+    def update_controller_profile_form_location_name(self, value: str):
+        self.controller_profile_form_location_name = value
 
     def update_controller_profile_form_device_type(self, value: str):
         self.controller_profile_form_device_type = value
@@ -79,11 +88,18 @@ class ConfigurationStateMixin(rx.State, mixin=True):
     def update_controller_profile_form_retries_text(self, value: str):
         self.controller_profile_form_retries_text = value
 
+    def update_controller_profile_form_latitude_text(self, value: str):
+        self.controller_profile_form_latitude_text = value
+
+    def update_controller_profile_form_longitude_text(self, value: str):
+        self.controller_profile_form_longitude_text = value
+
     def _reset_controller_profile_form(self):
         self.controller_profile_form_error = ""
         self.controller_profile_original_device_id = ""
         self.controller_profile_form_device_id = ""
         self.controller_profile_form_name = ""
+        self.controller_profile_form_location_name = ""
         self.controller_profile_form_device_type = FleetService.DEFAULT_DEVICE_TYPE
         self.controller_profile_form_ip_address = ""
         self.controller_profile_form_port_text = "161"
@@ -91,6 +107,8 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         self.controller_profile_form_snmp_version = "auto"
         self.controller_profile_form_timeout_text = "3"
         self.controller_profile_form_retries_text = "1"
+        self.controller_profile_form_latitude_text = ""
+        self.controller_profile_form_longitude_text = ""
 
     def _sync_controller_profile_rows(self, notice: str = "") -> list[dict[str, Any]]:
         try:
@@ -152,6 +170,7 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         self.controller_profile_original_device_id = str(selected.get("device_id", "")).strip()
         self.controller_profile_form_device_id = str(selected.get("device_id", "")).strip()
         self.controller_profile_form_name = str(selected.get("name", "")).strip()
+        self.controller_profile_form_location_name = str(selected.get("location_name", "")).strip()
         self.controller_profile_form_device_type = str(
             selected.get("device_type", FleetService.DEFAULT_DEVICE_TYPE)
         ).strip() or FleetService.DEFAULT_DEVICE_TYPE
@@ -161,9 +180,18 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         self.controller_profile_form_snmp_version = str(selected.get("snmp_version", "auto")).strip()
         self.controller_profile_form_timeout_text = str(selected.get("timeout_seconds", 3.0)).strip()
         self.controller_profile_form_retries_text = str(selected.get("retries", 1)).strip()
+        self.controller_profile_form_latitude_text = (
+            "" if selected.get("latitude") is None else str(selected.get("latitude", ""))
+        )
+        self.controller_profile_form_longitude_text = (
+            "" if selected.get("longitude") is None else str(selected.get("longitude", ""))
+        )
         self.selected_device_id = self.controller_profile_form_device_id
         self.controller_profile_notice = f"Loaded controller profile {target}."
         self.controller_profile_form_error = ""
+        refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
+        if callable(refresh_map):
+            refresh_map()
 
     def load_controller_profile_from_row(self, device_id: str):
         self.load_controller_profile(device_id)
@@ -185,6 +213,7 @@ class ConfigurationStateMixin(rx.State, mixin=True):
             profile = FleetService.build_profile_from_form(
                 device_id=target_device_id,
                 name=self.controller_profile_form_name,
+                location_name=self.controller_profile_form_location_name,
                 device_type=self.controller_profile_form_device_type,
                 ip_address_text=self.controller_profile_form_ip_address,
                 port_text=self.controller_profile_form_port_text,
@@ -192,6 +221,8 @@ class ConfigurationStateMixin(rx.State, mixin=True):
                 snmp_version=self.controller_profile_form_snmp_version,
                 timeout_text=self.controller_profile_form_timeout_text,
                 retries_text=self.controller_profile_form_retries_text,
+                latitude_text=self.controller_profile_form_latitude_text,
+                longitude_text=self.controller_profile_form_longitude_text,
             )
             updated_profiles = FleetService.upsert_profile(updated_profiles, profile)
         except Exception as exc:
@@ -205,6 +236,9 @@ class ConfigurationStateMixin(rx.State, mixin=True):
             self.selected_device_id = target_device_id
         self.controller_profile_form_error = ""
         self._sync_controller_profile_rows(f"Saved controller profile {target_device_id}.")
+        refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
+        if callable(refresh_map):
+            refresh_map(updated_profiles)
 
     def delete_controller_profile(self):
         target = self.controller_profile_original_device_id.strip() or self.controller_profile_form_device_id.strip()
@@ -228,6 +262,9 @@ class ConfigurationStateMixin(rx.State, mixin=True):
             self.selected_device_id = ""
         self._reset_controller_profile_form()
         self._sync_controller_profile_rows(f"Removed controller profile {target}.")
+        refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
+        if callable(refresh_map):
+            refresh_map(updated_profiles)
 
     def open_selected_controller_status(self):
         target = self.controller_profile_form_device_id.strip() or self.controller_profile_original_device_id.strip()
@@ -239,3 +276,6 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         self.ui_workspace_mode = "monitor"
         self.monitor_view = "intersection"
         self.controller_profile_notice = f"Opened Overview for {target}."
+        refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
+        if callable(refresh_map):
+            refresh_map()

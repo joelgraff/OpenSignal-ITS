@@ -28,6 +28,7 @@ def _controller_profile_roster() -> rx.Component:
             ),
             _sort_button("ID", "device_id"),
             _sort_button("Name", "name"),
+            _sort_button("Location", "location_name"),
             _sort_button("IP", "ip_address"),
             rx.button(
                 rx.cond(TrafficState.controller_profile_sort_desc, "Desc", "Asc"),
@@ -61,15 +62,28 @@ def _controller_profile_roster() -> rx.Component:
                                         color_scheme=row["status_scheme"],
                                         size="1",
                                     ),
-                                    rx.text(row["label"], size="1", text_align="left"),
+                                    rx.badge(
+                                        row["mapping_label"],
+                                        color_scheme=row["mapping_scheme"],
+                                        size="1",
+                                        variant="soft",
+                                    ),
+                                    rx.text(row["title"], size="1", text_align="left", font_weight="600"),
                                     spacing="2",
                                     align="center",
                                     width="100%",
                                 ),
                                 rx.hstack(
-                                    rx.text(row["detail_text"], size="1", color="gray"),
+                                    rx.text(row["subtitle"], size="1", color="gray"),
                                     rx.spacer(),
                                     rx.text(row["updated_text"], size="1", color="gray"),
+                                    width="100%",
+                                    align="center",
+                                ),
+                                rx.hstack(
+                                    rx.text(row["detail_text"], size="1", color="gray"),
+                                    rx.spacer(),
+                                    rx.text(row["coordinate_text"], size="1", color="gray"),
                                     width="100%",
                                     align="center",
                                 ),
@@ -124,6 +138,12 @@ def _controller_profile_form() -> rx.Component:
                     value=TrafficState.controller_profile_form_name,
                     on_change=TrafficState.update_controller_profile_form_name,
                     placeholder="Display name",
+                    size="1",
+                ),
+                rx.input(
+                    value=TrafficState.controller_profile_form_location_name,
+                    on_change=TrafficState.update_controller_profile_form_location_name,
+                    placeholder="Location label / intersection",
                     size="1",
                 ),
                 template_columns="repeat(auto-fit, minmax(220px, 1fr))",
@@ -182,6 +202,28 @@ def _controller_profile_form() -> rx.Component:
                 spacing="2",
                 width="100%",
             ),
+            rx.grid(
+                rx.input(
+                    value=TrafficState.controller_profile_form_latitude_text,
+                    on_change=TrafficState.update_controller_profile_form_latitude_text,
+                    placeholder="Latitude",
+                    size="1",
+                ),
+                rx.input(
+                    value=TrafficState.controller_profile_form_longitude_text,
+                    on_change=TrafficState.update_controller_profile_form_longitude_text,
+                    placeholder="Longitude",
+                    size="1",
+                ),
+                template_columns="repeat(auto-fit, minmax(220px, 1fr))",
+                spacing="2",
+                width="100%",
+            ),
+            rx.text(
+                "Coordinates are optional for now, but controllers need both latitude and longitude to appear on the map.",
+                size="1",
+                color="gray",
+            ),
             rx.hstack(
                 rx.button(
                     rx.cond(
@@ -205,7 +247,7 @@ def _controller_profile_form() -> rx.Component:
                     variant="ghost",
                 ),
                 rx.button(
-                    "Open in Status",
+                    "Open in Overview",
                     on_click=TrafficState.open_selected_controller_status,
                     size="1",
                     variant="outline",
@@ -227,7 +269,7 @@ def _advanced_json_editor() -> rx.Component:
         body=rx.text_area(
             value=TrafficState.device_profiles_json,
             on_change=TrafficState.update_device_profiles_json,
-            placeholder='[{"device_id":"int-1","device_type":"siemens_m60","ip_address":"10.0.0.1"}]',
+            placeholder='[{"device_id":"int-1","device_type":"siemens_m60","ip_address":"10.0.0.1","latitude":40.7128,"longitude":-74.0060}]',
             width="100%",
             min_height="12em",
         ),
@@ -241,7 +283,7 @@ def configuration_workspace_fleet_profiles_editor() -> rx.Component:
             rx.grid(
                 _controller_profile_roster(),
                 _controller_profile_form(),
-                template_columns="1fr 1.4fr",
+                template_columns="repeat(auto-fit, minmax(320px, 1fr))",
                 spacing="2",
                 width="100%",
             ),

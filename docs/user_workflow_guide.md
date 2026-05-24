@@ -35,6 +35,7 @@ Authoritative label decisions and disposition of proposed alternatives are maint
 ### 2. Main Dashboard (High-Level Overview)
 - Top status bar showing selected controller, online/offline state, alarm count, and last update.
 - Workspace tabs for **Overview**, **Signal Control**, **Maintenance**, **Alarms & Events**, **Controllers**, and **Access**.
+- **Signal Map** plots controllers that have stored coordinates and lets operators click markers to open detail.
 - Quick path to **Controllers** for profile management.
 
 **Reference:** See [ui-label-glossary.md](ui-label-glossary.md) for definitions of status indicators and summary fields.
@@ -61,7 +62,7 @@ Selecting a controller from **Overview** opens **Intersection Detail**, which pr
 ### 5. Controller Management
 - Navigate to **Controllers** (sidebar or top nav).
 - Add, edit, or remove signal controllers.
-- Configure basic metadata (IP address, SNMP settings, location, phase-to-movement mapping).
+- Configure basic metadata (IP address, SNMP settings, location label, latitude/longitude, phase-to-movement mapping).
 
 ### 6. Alarms & Notifications
 - Critical alarms appear on the main dashboard and detail pages.
@@ -73,7 +74,7 @@ Selecting a controller from **Overview** opens **Intersection Detail**, which pr
 - The existing UI contains some technical labels and fields (see [ui-label-glossary.md](ui-label-glossary.md)).
 - Not every field currently shown needs to remain visible in the final interface.
 - We will gradually simplify the UI to focus on operator-useful information while keeping advanced/raw data accessible but out of the way.
-- A map-first controller selection panel is now implemented as a preview scaffold and can be upgraded to full GIS mapping.
+- The Overview workspace now includes a real coordinate-backed map panel. Controllers without latitude/longitude remain available in the list until coordinates are added.
 
 ---
 

@@ -8,11 +8,13 @@ from opensignal_its.services.fleet_service import FleetService
 
 class FleetServiceTests(unittest.TestCase):
     def test_parse_profiles_json_returns_profiles(self):
-        raw = '[{"device_id":"int-1","device_type":"siemens_m60","ip_address":"10.0.0.1"}]'
+        raw = '[{"device_id":"int-1","device_type":"siemens_m60","ip_address":"10.0.0.1","latitude":40.0,"longitude":-75.0}]'
         profiles = FleetService.parse_profiles_json(raw)
         self.assertEqual(1, len(profiles))
         self.assertEqual("int-1", profiles[0]["device_id"])
         self.assertEqual("siemens_m60", profiles[0]["device_type"])
+        self.assertEqual(40.0, profiles[0]["latitude"])
+        self.assertEqual(-75.0, profiles[0]["longitude"])
 
     def test_parse_profiles_json_rejects_non_list(self):
         with self.assertRaises(ValueError):
@@ -80,6 +82,7 @@ class FleetServiceTests(unittest.TestCase):
                 "device_type": "siemens_m60",
                 "ip_address": "10.0.0.1",
                 "name": "Main & 1st",
+                "location_name": "Downtown Main",
             },
             {
                 "device_id": "int-2",
@@ -92,6 +95,7 @@ class FleetServiceTests(unittest.TestCase):
         self.assertEqual(["int-1"], [p["device_id"] for p in FleetService.filter_profiles(profiles, "main")])
         self.assertEqual(["int-2"], [p["device_id"] for p in FleetService.filter_profiles(profiles, "10.0.0.2")])
         self.assertEqual(["int-2"], [p["device_id"] for p in FleetService.filter_profiles(profiles, "int-2")])
+        self.assertEqual(["int-1"], [p["device_id"] for p in FleetService.filter_profiles(profiles, "downtown")])
 
     def test_sort_profiles_orders_by_name_and_ip(self):
         profiles = [
@@ -100,24 +104,34 @@ class FleetServiceTests(unittest.TestCase):
                 "device_type": "siemens_m60",
                 "ip_address": "10.0.0.20",
                 "name": "Zulu",
+                "location_name": "West Corridor",
             },
             {
                 "device_id": "int-1",
                 "device_type": "siemens_m60",
                 "ip_address": "10.0.0.3",
                 "name": "Alpha",
+                "location_name": "Central Business District",
             },
         ]
 
         by_name = FleetService.sort_profiles(profiles, "name")
+        by_location = FleetService.sort_profiles(profiles, "location_name")
         by_ip_desc = FleetService.sort_profiles(profiles, "ip_address", descending=True)
 
         self.assertEqual(["int-1", "int-2"], [p["device_id"] for p in by_name])
+        self.assertEqual(["int-1", "int-2"], [p["device_id"] for p in by_location])
         self.assertEqual(["int-2", "int-1"], [p["device_id"] for p in by_ip_desc])
 
     def test_build_profile_display_rows_includes_status_metadata(self):
         profiles = [
-            {"device_id": "int-1", "device_type": "siemens_m60", "ip_address": "10.0.0.1"},
+            {
+                "device_id": "int-1",
+                "device_type": "siemens_m60",
+                "ip_address": "10.0.0.1",
+                "latitude": 40.7128,
+                "longitude": -74.0060,
+            },
             {"device_id": "int-2", "device_type": "siemens_m60", "ip_address": "10.0.0.2"},
             {"device_id": "int-3", "device_type": "siemens_m60", "ip_address": "10.0.0.3"},
         ]
@@ -130,14 +144,19 @@ class FleetServiceTests(unittest.TestCase):
 
         self.assertEqual("Online", rows[0]["status_label"])
         self.assertEqual("green", rows[0]["status_scheme"])
+        self.assertEqual("Mapped", rows[0]["mapping_label"])
+        self.assertEqual("40.71280, -74.00600", rows[0]["coordinate_text"])
         self.assertEqual("No status detail.", rows[0]["detail_text"])
         self.assertEqual("", rows[0]["updated_text"])
         self.assertEqual("Offline", rows[1]["status_label"])
         self.assertEqual("red", rows[1]["status_scheme"])
+        self.assertEqual("Needs Coordinates", rows[1]["mapping_label"])
+        self.assertEqual("Coordinates not set", rows[1]["coordinate_text"])
         self.assertEqual("No status detail.", rows[1]["detail_text"])
         self.assertEqual("", rows[1]["updated_text"])
         self.assertEqual("Unknown", rows[2]["status_label"])
         self.assertEqual("gray", rows[2]["status_scheme"])
+        self.assertEqual("Needs Coordinates", rows[2]["mapping_label"])
         self.assertEqual("No poll data yet.", rows[2]["detail_text"])
         self.assertEqual("", rows[2]["updated_text"])
 
@@ -167,6 +186,7 @@ class FleetServiceTests(unittest.TestCase):
         profile = FleetService.build_profile_from_form(
             device_id="int-1",
             name="Main & 1st",
+            location_name="Main & 1st / Downtown",
             device_type="siemens_m60",
             ip_address_text="10.0.0.1",
             port_text="161",
@@ -174,6 +194,8 @@ class FleetServiceTests(unittest.TestCase):
             snmp_version="v1",
             timeout_text="3.5",
             retries_text="2",
+            latitude_text="40.7128",
+            longitude_text="-74.0060",
         )
 
         self.assertEqual("int-1", profile["device_id"])
@@ -181,6 +203,25 @@ class FleetServiceTests(unittest.TestCase):
         self.assertEqual(161, profile["port"])
         self.assertEqual(3.5, profile["timeout_seconds"])
         self.assertEqual(2, profile["retries"])
+        self.assertEqual("Main & 1st / Downtown", profile["location_name"])
+        self.assertEqual(40.7128, profile["latitude"])
+        self.assertEqual(-74.006, profile["longitude"])
+
+    def test_build_profile_from_form_rejects_partial_coordinates(self):
+        with self.assertRaises(ValueError):
+            FleetService.build_profile_from_form(
+                device_id="int-1",
+                name="",
+                device_type="siemens_m60",
+                ip_address_text="10.0.0.1",
+                port_text="161",
+                community="public",
+                snmp_version="v1",
+                timeout_text="3",
+                retries_text="1",
+                latitude_text="40.0",
+                longitude_text="",
+            )
 
     def test_build_profile_from_form_rejects_invalid_port(self):
         with self.assertRaises(ValueError):
@@ -257,6 +298,60 @@ class FleetServiceTests(unittest.TestCase):
         self.assertIn("int-1", row)
         self.assertIn("siemens_m60", row)
         self.assertIn("ONLINE", row)
+
+    def test_build_map_marker_rows_uses_profile_coordinates_and_status(self):
+        profiles = [
+            {
+                "device_id": "int-1",
+                "device_type": "siemens_m60",
+                "ip_address": "10.0.0.1",
+                "name": "Main & 1st",
+                "location_name": "Main & 1st",
+                "latitude": 40.7128,
+                "longitude": -74.0060,
+            },
+            {
+                "device_id": "int-2",
+                "device_type": "siemens_m60",
+                "ip_address": "10.0.0.2",
+                "name": "Broadway",
+            },
+        ]
+        status_map = {
+            "int-1": {
+                "is_online": True,
+                "status_text": "Pattern 2 | Unit Free",
+                "timestamp": "2026-05-24T12:00:00+00:00",
+            }
+        }
+
+        markers = FleetService.build_map_marker_rows(profiles, status_map, selected_device_id="int-1")
+
+        self.assertEqual(1, len(markers))
+        self.assertEqual("int-1", markers[0]["device_id"])
+        self.assertEqual("Main & 1st", markers[0]["label"])
+        self.assertEqual("Online", markers[0]["status_label"])
+        self.assertTrue(bool(markers[0]["is_selected"]))
+
+    def test_list_unmapped_profiles_returns_missing_coordinate_ids(self):
+        profiles = [
+            {
+                "device_id": "int-1",
+                "device_type": "siemens_m60",
+                "ip_address": "10.0.0.1",
+                "latitude": 40.0,
+                "longitude": -75.0,
+            },
+            {
+                "device_id": "int-2",
+                "device_type": "siemens_m60",
+                "ip_address": "10.0.0.2",
+            },
+        ]
+
+        unmapped = FleetService.list_unmapped_profiles(profiles)
+
+        self.assertEqual(["int-2"], unmapped)
 
     def test_resolve_target_uses_selected_profile(self):
         profiles = [

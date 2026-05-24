@@ -15,6 +15,7 @@ Use these labels as the canonical set for current UI and documentation.
 | Configuration tab | Controllers |
 | Admin tab | Access |
 | Monitor page title | Network Overview |
+| Monitor map section | Signal Map |
 | Monitor detail title | Intersection Detail |
 | Configuration page title | Controllers |
 | Access page title | Access |
@@ -28,7 +29,7 @@ Use these labels as the canonical set for current UI and documentation.
 | Use Controllers instead of Site/Fleet terminology | Adopted | Implemented across tabs, page titles, and notices. |
 | Keep Alarms visible and operator-focused | Adopted | Alarms & Events remains a primary tab. |
 | Intersection Detail page as primary screen | Partially adopted | Overview remains the landing workspace; selecting a controller opens an Intersection Detail view within the same workflow. |
-| Dashboard map as first screen | Partially adopted | The Overview landing workspace now includes a map-style controller panel that can be upgraded later to full GIS mapping. |
+| Dashboard map as first screen | Adopted | Overview now includes a live coordinate-backed Signal Map; future GIS/provider work can build on the same stored controller coordinates. |
 | Cabinet equipment section (video, battery, power) | Deferred | Requires new data model/integrations. |
 | Raw Data and Advanced separation | Deferred | Planned for future UX simplification phase. |
 | Replace write-mode wording with Unlock Controls | Deferred | Current safety model preserved to avoid operational ambiguity during hardening. |
@@ -89,6 +90,8 @@ Sign in, sign out, and run admin lockout recovery actions.
 
 - Network Overview:
 Landing page for fleet summary, controller map, and controller list.
+- Signal Map:
+Interactive map panel that plots controllers with stored latitude/longitude and lets operators click markers to open intersection detail.
 - Intersection Detail:
 Drill-in page for one selected controller, including live phase state and command-adjacent diagnostics.
 - Controller Connection & Polling:
@@ -109,6 +112,10 @@ Enable/disable periodic status refresh.
 Enable/disable automatic reconnect when communication drops.
 - Selected controller ID (optional):
 Optional controller identifier to scope actions.
+- Location label / intersection:
+Friendly label used for map hover text and controller context.
+- Latitude / Longitude:
+Optional coordinate pair required to place a controller on the Signal Map.
 - Selected Controller:
 Current polling/action target summary card.
 - Refresh Controllers:
