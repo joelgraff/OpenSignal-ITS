@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from typing import Any
 
 from ..devices.parsers import build_siemens_m60_view
@@ -116,22 +115,6 @@ class MonitorStateMixin:
             fallback_device_id=self.ip_address.strip() or "single-device",
             fallback_device_type=FleetService.DEFAULT_DEVICE_TYPE,
         )
-
-    def _parse_timestamp(self, ts: str) -> datetime | None:
-        if not ts:
-            return None
-        try:
-            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-
-    def _poll_delta_seconds(self, previous_ts: str, current_ts: str) -> int:
-        prev = self._parse_timestamp(previous_ts)
-        curr = self._parse_timestamp(current_ts)
-        if prev is None or curr is None:
-            return 0
-        delta = int((curr - prev).total_seconds())
-        return max(0, delta)
 
     def _apply_phase_payload(self, payload: dict, poll_delta_seconds: int = 0):
         parsed = build_siemens_m60_view(

@@ -5,14 +5,18 @@ from unittest.mock import patch
 from opensignal_its.models.event import AlarmDisplayRow, EventDisplayView, TimelineDisplayRow
 from opensignal_its.models.fleet import FleetDeviceStatus, FleetRefreshView, RuntimeRegistryView
 from opensignal_its.states.auth_state import AuthStateMixin
+from opensignal_its.states.audit_state import AuditStateMixin
 from opensignal_its.states.command_state import CommandStateMixin
 from opensignal_its.states.configuration_state import ConfigurationStateMixin
 from opensignal_its.states.event_state import _event_view_to_state_fields
+from opensignal_its.states.fleet_state import FleetStateMixin, _fleet_view_to_state_fields
 from opensignal_its.states.maintenance_state import _runtime_health_snapshot_to_state_fields
 from opensignal_its.states.monitor_state import MonitorStateMixin
 from opensignal_its.states.polling_state import _runtime_registry_view_to_state_fields
 from opensignal_its.states.safety_state import SafetyStateMixin
-from opensignal_its.states.traffic_state import TrafficState, _fleet_view_to_state_fields
+from opensignal_its.states.time_state import TimeStateMixin
+from opensignal_its.states.traffic_state import TrafficState
+from opensignal_its.states.workspace_state import WorkspaceStateMixin
 
 
 class TrafficStateAdapterTests(unittest.TestCase):
@@ -237,6 +241,66 @@ class TrafficStateAdapterTests(unittest.TestCase):
 
         self.assertEqual([("select_pattern", 1, False)], probe.calls)
 
+    def test_fleet_state_interval_helpers_apply_bounds_and_fallbacks(self):
+        class _FleetProbe(FleetStateMixin):
+            refresh_interval_text = "5"
+            reconnect_interval_text = "10"
+
+        probe = _FleetProbe()
+        probe.refresh_interval_text = "0"
+        self.assertEqual(1.0, probe._refresh_interval_seconds())
+
+        probe.refresh_interval_text = "bad"
+        self.assertEqual(5.0, probe._refresh_interval_seconds())
+
+        probe.reconnect_interval_text = "1"
+        self.assertEqual(2.0, probe._reconnect_interval_seconds())
+
+        probe.reconnect_interval_text = "bad"
+        self.assertEqual(10.0, probe._reconnect_interval_seconds())
+
+    def test_audit_state_export_requires_admin_authorization(self):
+        class _AuditProbe(AuditStateMixin):
+            def __init__(self):
+                self.error = ""
+
+            def _is_role_authorized(self, allowed_roles):
+                return False
+
+        probe = _AuditProbe()
+
+        probe.export_audit_report()
+
+        self.assertEqual("Audit export denied: admin authentication required.", probe.audit_export_notice)
+        self.assertEqual(probe.audit_export_notice, probe.error)
+
+    def test_time_state_helpers_parse_deltas_and_expiration(self):
+        class _TimeProbe(TimeStateMixin):
+            pass
+
+        probe = _TimeProbe()
+
+        self.assertIsNone(probe._parse_timestamp("not-a-timestamp"))
+        self.assertEqual(5, probe._poll_delta_seconds("2026-05-23T00:00:00+00:00", "2026-05-23T00:00:05+00:00"))
+        self.assertTrue(probe._has_expired("2000-01-01T00:00:00+00:00"))
+        self.assertFalse(probe._has_expired("2999-01-01T00:00:00+00:00"))
+
+    def test_workspace_state_updates_mode_and_syncs_configuration(self):
+        class _WorkspaceProbe(WorkspaceStateMixin):
+            def __init__(self):
+                self.ui_workspace_mode = "monitor"
+                self.synced = False
+
+            def _sync_controller_profile_rows(self):
+                self.synced = True
+
+        probe = _WorkspaceProbe()
+
+        probe.update_ui_workspace_mode("configuration")
+
+        self.assertEqual("configuration", probe.ui_workspace_mode)
+        self.assertTrue(probe.synced)
+
 
     def test_traffic_state_exposes_event_state_members(self):
         required = [
@@ -430,8 +494,6 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "select_controller_from_row",
             "_build_config",
             "_selected_device_target",
-            "_parse_timestamp",
-            "_poll_delta_seconds",
             "_apply_phase_payload",
             "_collect_selected_status_snapshot",
             "_apply_status_snapshot",
@@ -455,6 +517,69 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "set_mode_coordinated",
             "manual_hold",
             "advance_phase",
+        ]
+
+        missing = [name for name in required if not hasattr(TrafficState, name)]
+
+        self.assertEqual([], missing)
+
+    def test_traffic_state_exposes_fleet_state_members(self):
+        required = [
+            "fleet_status_summary",
+            "fleet_device_rows",
+            "fleet_status_by_id",
+            "fleet_online_count",
+            "fleet_offline_count",
+            "fleet_total_count",
+            "auto_refresh_enabled",
+            "refresh_interval_text",
+            "auto_reconnect_enabled",
+            "reconnect_interval_text",
+            "auto_refresh_running",
+            "update_auto_refresh_enabled",
+            "update_refresh_interval_text",
+            "update_auto_reconnect_enabled",
+            "update_reconnect_interval_text",
+            "_refresh_interval_seconds",
+            "_reconnect_interval_seconds",
+            "_fleet_profiles",
+            "_refresh_fleet_aggregate_fields",
+            "_cache_device_status",
+            "refresh_fleet_status",
+            "auto_refresh_loop",
+        ]
+
+        missing = [name for name in required if not hasattr(TrafficState, name)]
+
+        self.assertEqual([], missing)
+
+    def test_traffic_state_exposes_audit_state_members(self):
+        required = [
+            "audit_export_notice",
+            "audit_export_path",
+            "export_audit_report",
+        ]
+
+        missing = [name for name in required if not hasattr(TrafficState, name)]
+
+        self.assertEqual([], missing)
+
+    def test_traffic_state_exposes_time_state_members(self):
+        required = [
+            "_utc_now_iso",
+            "_parse_timestamp",
+            "_poll_delta_seconds",
+            "_has_expired",
+        ]
+
+        missing = [name for name in required if not hasattr(TrafficState, name)]
+
+        self.assertEqual([], missing)
+
+    def test_traffic_state_exposes_workspace_state_members(self):
+        required = [
+            "ui_workspace_mode",
+            "update_ui_workspace_mode",
         ]
 
         missing = [name for name in required if not hasattr(TrafficState, name)]
