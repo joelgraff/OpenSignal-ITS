@@ -28,8 +28,9 @@ def workspace_section_card(
                 rx.fragment(),
             ),
             body,
-            spacing="2",
+            spacing="1",
             width="100%",
         ),
         width="100%",
+        size="1",
     )

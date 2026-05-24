@@ -8,7 +8,6 @@ def operations_workspace_section() -> rx.Component:
     return rx.cond(
         TrafficState.ui_workspace_mode == "operations",
         rx.vstack(
-            rx.heading("Maintenance Operations", size="3"),
             rx.grid(
                 workspace_section_card(
                     title="System Health",
@@ -75,18 +74,21 @@ def operations_workspace_section() -> rx.Component:
                     title="Maintenance Actions",
                     subtitle="Run retention cleanup and export audit data.",
                     body=rx.vstack(
-                        rx.button(
-                            "Run Retention Cleanup",
-                            on_click=TrafficState.run_retention_cleanup,
-                            size="2",
-                            variant="outline",
-                            width="100%",
-                        ),
-                        rx.button(
-                            "Export Audit Report",
-                            on_click=TrafficState.export_audit_report,
-                            size="2",
-                            variant="outline",
+                        rx.hstack(
+                            rx.button(
+                                "Run Retention Cleanup",
+                                on_click=TrafficState.run_retention_cleanup,
+                                size="1",
+                                variant="outline",
+                            ),
+                            rx.button(
+                                "Export Audit Report",
+                                on_click=TrafficState.export_audit_report,
+                                size="1",
+                                variant="outline",
+                            ),
+                            spacing="2",
+                            wrap="wrap",
                             width="100%",
                         ),
                         rx.text(
@@ -125,7 +127,7 @@ def operations_workspace_section() -> rx.Component:
                     ),
                 ),
                 template_columns="repeat(auto-fit, minmax(320px, 1fr))",
-                spacing="3",
+                spacing="2",
                 width="100%",
             ),
             spacing="2",

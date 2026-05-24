@@ -8,12 +8,11 @@ def analytics_workspace_section() -> rx.Component:
     return rx.cond(
         TrafficState.ui_workspace_mode == "analytics",
         rx.vstack(
-            rx.heading("Events & Alarms", size="3"),
             rx.hstack(
                 rx.button(
                     "Refresh Timeline",
                     on_click=TrafficState.refresh_events_and_alarms,
-                    size="2",
+                    size="1",
                     variant="outline",
                 ),
                 rx.button("15m", on_click=lambda: TrafficState.update_event_window("15m"), size="1", variant="soft"),
@@ -24,28 +23,36 @@ def analytics_workspace_section() -> rx.Component:
                 spacing="2",
                 wrap="wrap",
             ),
-            rx.text(TrafficState.event_notice, size="2", color="gray"),
+            rx.text(TrafficState.event_notice, size="1", color="gray"),
             rx.grid(
                 workspace_section_card(
                     title="Active Alarms",
                     subtitle="Acknowledge, silence, and annotate active alarms.",
                     body=rx.vstack(
-                        rx.input(
-                            value=TrafficState.selected_alarm_key,
-                            on_change=TrafficState.update_selected_alarm_key,
-                            placeholder="Selected alarm key",
+                        rx.hstack(
+                            rx.input(
+                                value=TrafficState.selected_alarm_key,
+                                on_change=TrafficState.update_selected_alarm_key,
+                                placeholder="Alarm key",
+                                size="1",
+                                max_width="14em",
+                            ),
+                            rx.input(
+                                value=TrafficState.alarm_silence_minutes_text,
+                                on_change=TrafficState.update_alarm_silence_minutes_text,
+                                placeholder="Silence min",
+                                size="1",
+                                max_width="7em",
+                            ),
+                            spacing="2",
+                            wrap="wrap",
                             width="100%",
                         ),
                         rx.input(
                             value=TrafficState.alarm_note_input,
                             on_change=TrafficState.update_alarm_note_input,
                             placeholder="Alarm note (optional)",
-                            width="100%",
-                        ),
-                        rx.input(
-                            value=TrafficState.alarm_silence_minutes_text,
-                            on_change=TrafficState.update_alarm_silence_minutes_text,
-                            placeholder="Silence minutes",
+                            size="1",
                             width="100%",
                         ),
                         rx.hstack(
@@ -118,29 +125,36 @@ def analytics_workspace_section() -> rx.Component:
                             spacing="2",
                             wrap="wrap",
                         ),
-                        rx.input(
-                            value=TrafficState.alarm_history_actor_filter,
-                            on_change=TrafficState.update_alarm_history_actor_filter,
-                            placeholder="Actor contains",
-                            width="100%",
-                        ),
-                        rx.input(
-                            value=TrafficState.alarm_history_key_filter,
-                            on_change=TrafficState.update_alarm_history_key_filter,
-                            placeholder="Alarm key contains",
-                            width="100%",
-                        ),
-                        rx.input(
-                            value=TrafficState.alarm_history_limit_text,
-                            on_change=TrafficState.update_alarm_history_limit_text,
-                            placeholder="Row limit (5-200)",
-                            width="100%",
-                        ),
-                        rx.button(
-                            "Apply Filters",
-                            on_click=TrafficState.refresh_events_and_alarms,
-                            size="1",
-                            variant="outline",
+                        rx.hstack(
+                            rx.input(
+                                value=TrafficState.alarm_history_actor_filter,
+                                on_change=TrafficState.update_alarm_history_actor_filter,
+                                placeholder="Actor contains",
+                                size="1",
+                                max_width="12em",
+                            ),
+                            rx.input(
+                                value=TrafficState.alarm_history_key_filter,
+                                on_change=TrafficState.update_alarm_history_key_filter,
+                                placeholder="Key contains",
+                                size="1",
+                                max_width="12em",
+                            ),
+                            rx.input(
+                                value=TrafficState.alarm_history_limit_text,
+                                on_change=TrafficState.update_alarm_history_limit_text,
+                                placeholder="Limit",
+                                size="1",
+                                max_width="6em",
+                            ),
+                            rx.button(
+                                "Apply",
+                                on_click=TrafficState.refresh_events_and_alarms,
+                                size="1",
+                                variant="outline",
+                            ),
+                            spacing="2",
+                            wrap="wrap",
                             width="100%",
                         ),
                         rx.box(

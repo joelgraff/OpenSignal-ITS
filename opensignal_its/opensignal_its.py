@@ -1,6 +1,5 @@
 import reflex as rx
 
-from .components.device_card import timing_panel
 from .components.workspaces import (
     admin_workspace_page,
     workspace_page_content,
@@ -14,134 +13,28 @@ bootstrap_runtime_safety()
 start_retention_scheduler()
 
 
-# Example page
-def index():
-    return rx.vstack(
-        rx.heading("Traffic Controller Platform", size="9"),
-        rx.hstack(
-            rx.input(
-                value=TrafficState.ip_address,
-                on_change=TrafficState.update_ip_address,
-                placeholder="Controller IP",
-                width="18em",
-            ),
-            rx.input(
-                value=TrafficState.port_text,
-                on_change=TrafficState.update_port_text,
-                placeholder="Port",
-                width="7em",
-            ),
-            rx.input(
-                value=TrafficState.community,
-                on_change=TrafficState.update_community,
-                placeholder="SNMP community",
-                width="10em",
-            ),
-            spacing="3",
-            wrap="wrap",
-        ),
-        rx.hstack(
-            rx.input(
-                value=TrafficState.snmp_version,
-                on_change=TrafficState.update_snmp_version,
-                placeholder="SNMP version: auto | v2c | v1",
-                width="14em",
-            ),
-            rx.input(
-                value=TrafficState.timeout_text,
-                on_change=TrafficState.update_timeout_text,
-                placeholder="Timeout seconds",
-                width="10em",
-            ),
-            rx.input(
-                value=TrafficState.retries_text,
-                on_change=TrafficState.update_retries_text,
-                placeholder="Retries",
-                width="7em",
-            ),
-            spacing="3",
-            wrap="wrap",
-        ),
-        rx.hstack(
-            rx.switch(
-                checked=TrafficState.safe_command_probe,
-                on_change=TrafficState.update_safe_command_probe,
-            ),
-            rx.text("Safe Command Probe (no SNMP SET writes)"),
-            spacing="2",
-            align="center",
-        ),
-        rx.hstack(
-            rx.switch(
-                checked=TrafficState.auto_refresh_enabled,
-                on_change=TrafficState.update_auto_refresh_enabled,
-            ),
-            rx.text("Auto Refresh"),
-            rx.input(
-                value=TrafficState.refresh_interval_text,
-                on_change=TrafficState.update_refresh_interval_text,
-                placeholder="Seconds",
-                width="6em",
-            ),
-            rx.text("sec"),
-            spacing="2",
-            align="center",
-        ),
-        rx.hstack(
-            rx.switch(
-                checked=TrafficState.auto_reconnect_enabled,
-                on_change=TrafficState.update_auto_reconnect_enabled,
-            ),
-            rx.text("Auto Reconnect"),
-            rx.input(
-                value=TrafficState.reconnect_interval_text,
-                on_change=TrafficState.update_reconnect_interval_text,
-                placeholder="Seconds",
-                width="6em",
-            ),
-            rx.text("sec"),
-            spacing="2",
-            align="center",
-        ),
-        rx.button("Connect & Poll Siemens M60", on_click=TrafficState.connect_and_start_polling),
-        timing_panel(
-            TrafficState.current_pattern,
-            TrafficState.unit_status,
-            TrafficState.green_phases,
-            TrafficState.yellow_phases,
-            TrafficState.red_phases,
-            TrafficState.vehicle_calls,
-            TrafficState.ped_calls,
-            TrafficState.remaining_time_summary,
-            TrafficState.timer_mode_text,
-            TrafficState.ring_status_summary,
-            TrafficState.ring_status_lines,
-            TrafficState.phase_detail_lines,
-            TrafficState.status_text,
-            TrafficState.select_pattern_1,
-            TrafficState.select_pattern_2,
-            TrafficState.set_mode_free,
-            TrafficState.set_mode_coordinated,
-            TrafficState.manual_hold,
-            TrafficState.advance_phase,
-        ),
-        rx.cond(
-            TrafficState.m60_status_json != "",
-            rx.code_block(TrafficState.m60_status_json, language="json"),
-            rx.text("No status yet."),
-        ),
-        spacing="5",
-        padding="2em",
-    )
-
-
 def dashboard():
     return rx.vstack(
         rx.card(
             rx.vstack(
                 rx.hstack(
-                    rx.heading("OpenSignal ITS Controller Console", size="8", color="indigo"),
+                    rx.heading("OpenSignal ITS", size="5", color="indigo"),
+                    rx.text("Controller Console", size="1", color="gray"),
                     rx.spacer(),
+                    rx.badge(
+                        rx.cond(TrafficState.is_online, "ONLINE", "OFFLINE"),
+                        color_scheme=rx.cond(TrafficState.is_online, "green", "red"),
+                    ),
+                    rx.badge(
+                        rx.cond(TrafficState.safe_command_probe, "PROBE", "WRITE"),
+                        color_scheme=rx.cond(TrafficState.safe_command_probe, "amber", "red"),
+                    ),
+                    rx.badge(
+                        rx.cond(TrafficState.write_mode_active, "UNLOCKED", "LOCKED"),
+                        color_scheme=rx.cond(TrafficState.write_mode_active, "red", "gray"),
+                    ),
+                    rx.badge(f"ROLE {TrafficState.current_role.upper()}", color_scheme="indigo"),
+                    rx.badge(f"ALARMS {TrafficState.alarm_rows.length()}", color_scheme="orange"),
                     rx.cond(
                         TrafficState.is_authenticated,
                         rx.hstack(
@@ -150,63 +43,49 @@ def dashboard():
                                 on_click=TrafficState.connect_and_start_polling,
                                 is_disabled=TrafficState.is_loading,
                                 color_scheme="green",
-                                size="3",
+                                size="1",
                             ),
                             rx.button(
                                 "Refresh",
                                 on_click=TrafficState.refresh_status,
                                 is_disabled=TrafficState.is_loading,
-                                size="3",
+                                size="1",
+                                variant="outline",
                             ),
-                            spacing="2",
+                            spacing="1",
                         ),
                         rx.badge("SIGN-IN REQUIRED", color_scheme="orange"),
                     ),
-                    width="100%",
-                ),
-                rx.hstack(
-                    rx.badge(
-                        rx.cond(TrafficState.is_online, "ONLINE", "OFFLINE"),
-                        color_scheme=rx.cond(TrafficState.is_online, "green", "red"),
-                    ),
-                    rx.badge(
-                        rx.cond(TrafficState.safe_command_probe, "PROBE MODE", "WRITE MODE"),
-                        color_scheme=rx.cond(TrafficState.safe_command_probe, "amber", "red"),
-                    ),
-                    rx.badge(
-                        rx.cond(TrafficState.write_mode_active, "WRITE UNLOCKED", "WRITE LOCKED"),
-                        color_scheme=rx.cond(TrafficState.write_mode_active, "red", "gray"),
-                    ),
-                    rx.badge(f"ROLE {TrafficState.current_role.upper()}", color_scheme="indigo"),
-                    rx.badge(f"ALARMS {TrafficState.alarm_rows.length()}", color_scheme="orange"),
-                    rx.text(f"Selected Site: {TrafficState.selected_device_id}"),
-                    rx.text(f"Updated: {TrafficState.last_updated}"),
-                    spacing="3",
+                    spacing="2",
+                    align="center",
                     wrap="wrap",
                     width="100%",
                 ),
-                rx.text(
-                    f"Pattern {TrafficState.current_pattern} | Unit {TrafficState.unit_status} | "
-                    f"SNMP {TrafficState.active_snmp_version} | Signal Sites {TrafficState.fleet_total_count} total "
-                    f"({TrafficState.fleet_online_count} online / {TrafficState.fleet_offline_count} offline)",
-                    size="2",
-                    color="gray",
+                rx.hstack(
+                    rx.text(
+                        f"Controller: {TrafficState.selected_device_id} | Pattern {TrafficState.current_pattern} | "
+                        f"Unit {TrafficState.unit_status} | SNMP {TrafficState.active_snmp_version} | "
+                        f"Controllers {TrafficState.fleet_total_count} ({TrafficState.fleet_online_count}\u2191 / {TrafficState.fleet_offline_count}\u2193) | "
+                        f"Updated {TrafficState.last_updated}",
+                        size="1",
+                        color="gray",
+                    ),
                     width="100%",
                 ),
                 rx.cond(
                     TrafficState.is_authenticated,
                     workspace_tabs(),
                     rx.text(
-                        "Sign in to access signal sites, control, maintenance, alarms/events, and site inventory.",
-                        size="2",
+                        "Sign in to access controllers, control, maintenance, alarms/events, and controller profiles.",
+                        size="1",
                         color="gray",
                     ),
                 ),
-                spacing="3",
+                spacing="2",
                 width="100%",
             ),
             width="100%",
-            padding="4",
+            size="1",
         ),
         rx.cond(
             TrafficState.is_authenticated,
@@ -216,19 +95,19 @@ def dashboard():
         rx.cond(
             TrafficState.error != "",
             rx.box(
-                rx.text(TrafficState.error),
+                rx.text(TrafficState.error, size="1"),
                 border="1px solid #fca5a5",
                 bg="#fef2f2",
-                padding="3",
-                border_radius="8px",
+                padding="2",
+                border_radius="6px",
                 width="100%",
             ),
             rx.fragment(),
         ),
-        spacing="6",
-        padding="6",
+        spacing="3",
+        padding="3",
         width="100%",
-        max_width="1400px",
+        max_width="1600px",
         margin="0 auto",
     )
 

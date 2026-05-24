@@ -24,18 +24,18 @@ class FleetService:
             return []
         payload = json.loads(raw)
         if not isinstance(payload, list):
-            raise ValueError("Site profiles JSON must be a list of profile objects.")
+            raise ValueError("Controller profiles JSON must be a list of profile objects.")
 
         profiles: list[dict[str, Any]] = []
         for idx, item in enumerate(payload, start=1):
             if not isinstance(item, dict):
-                raise ValueError(f"Site profile #{idx} must be an object.")
+                raise ValueError(f"Controller profile #{idx} must be an object.")
             device_id = str(item.get("device_id", "")).strip()
             ip_address = str(item.get("ip_address", "")).strip()
             if not device_id:
-                raise ValueError(f"Site profile #{idx} is missing device_id (site ID).")
+                raise ValueError(f"Controller profile #{idx} is missing device_id (controller ID).")
             if not ip_address:
-                raise ValueError(f"Site profile #{idx} is missing ip_address.")
+                raise ValueError(f"Controller profile #{idx} is missing ip_address.")
             profiles.append(
                 {
                     "device_id": device_id,

@@ -30,12 +30,12 @@ def _workspace_tab_button(label: str, mode: str) -> rx.Component:
 def workspace_tabs() -> rx.Component:
     return rx.box(
         rx.hstack(
-            _workspace_tab_button("Sites & Status", "monitor"),
+            _workspace_tab_button("Controller Status", "monitor"),
             _workspace_tab_button("Signal Control", "control"),
             _workspace_tab_button("Maintenance", "operations"),
             _workspace_tab_button("Alarms & Events", "analytics"),
-            _workspace_tab_button("Site Inventory", "configuration"),
-            _workspace_tab_button("Sign-In & Roles", "admin"),
+            _workspace_tab_button("Controllers", "configuration"),
+            _workspace_tab_button("Access", "admin"),
             spacing="1",
             wrap="wrap",
             width="100%",

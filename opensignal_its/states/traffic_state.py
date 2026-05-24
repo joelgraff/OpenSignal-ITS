@@ -89,14 +89,14 @@ class TrafficState(rx.State):
     retries_text: str = "1"
     device_profiles_json: str = "[]"
     selected_device_id: str = ""
-    fleet_status_summary: str = "Signal site view idle."
+    fleet_status_summary: str = "Controller view idle."
     fleet_device_rows: list[str] = []
     fleet_status_by_id: dict[str, dict[str, Any]] = {}
     fleet_online_count: int = 0
     fleet_offline_count: int = 0
     fleet_total_count: int = 0
     managed_polling_interval_text: str = "5"
-    managed_polling_notice: str = "Site polling idle."
+    managed_polling_notice: str = "Controller polling idle."
     runtime_registry_summary: str = "Active poll sessions idle."
     runtime_registry_rows: list[str] = []
     event_notice: str = "Timeline feed idle."
@@ -160,6 +160,8 @@ class TrafficState(rx.State):
     reconnect_interval_text: str = "10"
     auto_refresh_running: bool = False
     ui_workspace_mode: str = "monitor"
+    monitor_detail_tab: str = "logs"
+    monitor_view: str = "dashboard"
 
     def update_ip_address(self, value: str):
         self.ip_address = value
@@ -253,6 +255,28 @@ class TrafficState(rx.State):
         normalized = value.strip().lower()
         if normalized in {"monitor", "control", "operations", "analytics", "configuration", "admin"}:
             self.ui_workspace_mode = normalized
+
+    def update_monitor_detail_tab(self, value: str):
+        normalized = value.strip().lower()
+        if normalized in {"logs", "timing", "video", "raw", "cabinet"}:
+            self.monitor_detail_tab = normalized
+
+    def update_monitor_view(self, value: str):
+        normalized = value.strip().lower()
+        if normalized in {"dashboard", "intersection"}:
+            self.monitor_view = normalized
+
+    def open_intersection_detail(self):
+        self.monitor_view = "intersection"
+
+    def back_to_dashboard(self):
+        self.monitor_view = "dashboard"
+
+    def select_controller_from_row(self, row: str):
+        tokenized = row.strip().split()
+        if tokenized:
+            self.selected_device_id = tokenized[0]
+            self.monitor_view = "intersection"
 
     def _refresh_interval_seconds(self) -> float:
         try:
@@ -400,7 +424,7 @@ class TrafficState(rx.State):
         self.fleet_offline_count = int(summary["offline"])
         if self.fleet_total_count > 0:
             self.fleet_status_summary = (
-                f"Signal sites: {self.fleet_total_count} total, "
+                f"Controllers: {self.fleet_total_count} total, "
                 f"{self.fleet_online_count} online, {self.fleet_offline_count} offline."
             )
 
@@ -811,13 +835,13 @@ class TrafficState(rx.State):
         try:
             profiles = self._fleet_profiles()
         except Exception as exc:
-            self.fleet_status_summary = f"Site profile parse failed: {exc}"
+            self.fleet_status_summary = f"Controller profile parse failed: {exc}"
             self.fleet_device_rows = []
             self.error = self.fleet_status_summary
             return
 
         if not profiles:
-            self.fleet_status_summary = "Site profile list is empty; using single-controller compatibility mode."
+            self.fleet_status_summary = "Controller profile list is empty; using single-controller compatibility mode."
             self.fleet_device_rows = []
             return
 
@@ -972,19 +996,19 @@ class TrafficState(rx.State):
 
     async def start_fleet_managed_polling(self):
         if not self._is_role_authorized({"admin"}):
-            self.managed_polling_notice = "Site polling start denied: admin authentication required."
+            self.managed_polling_notice = "Controller polling start denied: admin authentication required."
             self.error = self.managed_polling_notice
             return
 
         try:
             profiles = self._fleet_profiles()
         except Exception as exc:
-            self.managed_polling_notice = f"Site profile parse failed: {exc}"
+            self.managed_polling_notice = f"Controller profile parse failed: {exc}"
             self.error = self.managed_polling_notice
             return
 
         if not profiles:
-            self.managed_polling_notice = "Site polling start skipped: no configured site profiles."
+            self.managed_polling_notice = "Controller polling start skipped: no configured controller profiles."
             self.error = ""
             return
 
@@ -1005,7 +1029,7 @@ class TrafficState(rx.State):
             else:
                 failed += 1
 
-        self.managed_polling_notice = f"Site polling start complete: {started} succeeded, {failed} failed."
+        self.managed_polling_notice = f"Controller polling start complete: {started} succeeded, {failed} failed."
         self.error = "" if failed == 0 else self.managed_polling_notice
         self.refresh_runtime_registry_status()
 
@@ -1022,19 +1046,19 @@ class TrafficState(rx.State):
 
     def stop_fleet_managed_polling(self):
         if not self._is_role_authorized({"admin"}):
-            self.managed_polling_notice = "Site polling stop denied: admin authentication required."
+            self.managed_polling_notice = "Controller polling stop denied: admin authentication required."
             self.error = self.managed_polling_notice
             return
 
         try:
             profiles = self._fleet_profiles()
         except Exception as exc:
-            self.managed_polling_notice = f"Site profile parse failed: {exc}"
+            self.managed_polling_notice = f"Controller profile parse failed: {exc}"
             self.error = self.managed_polling_notice
             return
 
         if not profiles:
-            self.managed_polling_notice = "Site polling stop skipped: no configured site profiles."
+            self.managed_polling_notice = "Controller polling stop skipped: no configured controller profiles."
             self.error = ""
             return
 
