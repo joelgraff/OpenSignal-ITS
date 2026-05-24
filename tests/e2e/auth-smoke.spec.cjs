@@ -5,6 +5,7 @@ const adminPassword = process.env.PLAYWRIGHT_ADMIN_PASSWORD || 'adminpass123456'
 
 test('auth gate and workspace navigation stay functional', async ({ page }) => {
   await page.goto('/', { waitUntil: 'networkidle' });
+  await expect(page.locator('[title^="Connection Error:"]')).toHaveCount(0);
 
   await expect(page.getByText('SIGN-IN REQUIRED')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Access' })).toBeVisible();

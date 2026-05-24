@@ -1,4 +1,8 @@
 import reflex as rx
+from reflex import constants
+from reflex.utils import codespaces
+from reflex.utils.exec import get_compile_context
+from reflex_components_core.core.banner import backend_disabled, connection_toaster
 
 from .components.workspaces import (
     admin_workspace_page,
@@ -112,7 +116,22 @@ def dashboard():
         margin="0 auto",
     )
 
+
+def _overlay_without_connection_pulser():
+    return rx.fragment(
+        connection_toaster(),
+        *(
+            [backend_disabled()]
+            if get_compile_context() == constants.CompileContext.DEPLOY
+            else []
+        ),
+        *codespaces.codespaces_auto_redirect(),
+    )
+
 app = rx.App()
+app.app_wraps[(5, "Overlay")] = (
+    lambda stateful: _overlay_without_connection_pulser() if stateful else None
+)
 app.register_lifespan_task(_initialize_runtime)
 app.add_page(dashboard, route="/", title="OpenSignal ITS")
 OPS_API_ENDPOINTS: dict[str, object] = {}
