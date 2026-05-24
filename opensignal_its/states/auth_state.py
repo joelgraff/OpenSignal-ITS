@@ -9,7 +9,7 @@ import reflex as rx
 from ..services import OperatorAuthService
 
 
-_LOGIN_DISABLED = os.getenv("OPENSIGNAL_DISABLE_LOGIN", "1").strip().lower() in {
+_LOGIN_DISABLED = os.getenv("OPENSIGNAL_DISABLE_LOGIN", "0").strip().lower() in {
     "1",
     "true",
     "yes",

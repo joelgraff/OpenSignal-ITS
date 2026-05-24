@@ -25,6 +25,8 @@ source .venv/bin/activate
 
 Open the app at `http://localhost:3000`.
 
+UI sign-in is required by default. For a local-only admin bypass session during debugging, launch Reflex with `OPENSIGNAL_DISABLE_LOGIN=true`.
+
 ## Manual path
 
 If you prefer not to use the script, run these steps manually.

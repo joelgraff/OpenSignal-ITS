@@ -20,6 +20,8 @@ source .venv/bin/activate
 
 Open `http://localhost:3000`.
 
+UI sign-in is required by default, including local development. If you explicitly need a local admin bypass session for debugging, start Reflex with `OPENSIGNAL_DISABLE_LOGIN=true`.
+
 To run the local regression baseline:
 
 ```bash
