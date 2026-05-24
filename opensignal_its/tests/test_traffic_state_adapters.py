@@ -284,6 +284,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual(5, probe._poll_delta_seconds("2026-05-23T00:00:00+00:00", "2026-05-23T00:00:05+00:00"))
         self.assertTrue(probe._has_expired("2000-01-01T00:00:00+00:00"))
         self.assertFalse(probe._has_expired("2999-01-01T00:00:00+00:00"))
+        self.assertFalse(probe._has_expired(probe._utc_future_iso(60)))
 
     def test_workspace_state_updates_mode_and_syncs_configuration(self):
         class _WorkspaceProbe(WorkspaceStateMixin):
@@ -580,6 +581,16 @@ class TrafficStateAdapterTests(unittest.TestCase):
         required = [
             "ui_workspace_mode",
             "update_ui_workspace_mode",
+        ]
+
+        missing = [name for name in required if not hasattr(TrafficState, name)]
+
+        self.assertEqual([], missing)
+
+    def test_traffic_state_exposes_shell_fields(self):
+        required = [
+            "error",
+            "is_loading",
         ]
 
         missing = [name for name in required if not hasattr(TrafficState, name)]

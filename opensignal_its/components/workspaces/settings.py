@@ -1,6 +1,6 @@
 import reflex as rx
 
-from ...states.traffic_state import TrafficState
+from ...states import TrafficState
 from .configuration import configuration_workspace_fleet_profiles_editor
 from .page_frame import workspace_page_frame
 

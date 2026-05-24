@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -24,7 +23,7 @@ class CommandStateMixin:
         try:
             STORE.log_command(
                 CommandAuditRecord(
-                    timestamp=datetime.utcnow().isoformat(),
+                    timestamp=self._utc_now_iso(),
                     correlation_id=correlation_id,
                     device_ip=self.ip_address.strip(),
                     command_type=cmd_type,

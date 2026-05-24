@@ -1,6 +1,6 @@
 import reflex as rx
 
-from ...states.traffic_state import TrafficState
+from ...states import TrafficState
 
 
 def control_workspace_section() -> rx.Component:

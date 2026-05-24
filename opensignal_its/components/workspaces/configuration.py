@@ -1,6 +1,6 @@
 import reflex as rx
 
-from ...states.traffic_state import TrafficState
+from ...states import TrafficState
 from .section_card import workspace_section_card
 
 

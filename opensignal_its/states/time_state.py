@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 
 class TimeStateMixin:
     @staticmethod
     def _utc_now_iso() -> str:
         return datetime.now(UTC).isoformat()
+
+    @staticmethod
+    def _utc_future_iso(seconds_from_now: int | float) -> str:
+        return (datetime.now(UTC) + timedelta(seconds=seconds_from_now)).isoformat()
 
     def _parse_timestamp(self, ts: str) -> datetime | None:
         if not ts:

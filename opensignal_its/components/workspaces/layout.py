@@ -1,6 +1,6 @@
 import reflex as rx
 
-from ...states.traffic_state import TrafficState
+from ...states import TrafficState
 from .admin import admin_workspace_page
 from .analytics_page import analytics_workspace_page
 from .control_page import control_workspace_page

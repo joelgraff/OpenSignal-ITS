@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
 
 from ..services import OperatorAuthService
 
@@ -112,8 +111,7 @@ class AuthStateMixin:
             self.failed_login_attempts += 1
             if self.failed_login_attempts >= self._max_login_attempts():
                 lockout_seconds = self._login_lockout_seconds()
-                until = datetime.utcnow().timestamp() + lockout_seconds
-                self.login_lockout_until = datetime.utcfromtimestamp(until).isoformat()
+                self.login_lockout_until = self._utc_future_iso(lockout_seconds)
                 self.auth_notice = (
                     "Operator login temporarily locked due to repeated failures."
                 )

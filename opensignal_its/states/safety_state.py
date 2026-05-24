@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import random
-from datetime import datetime
 from typing import Any
 
 from ..services import CommandSafetyService
@@ -58,9 +57,8 @@ class SafetyStateMixin:
 
     def _start_command_confirmation(self, cmd_type: str, value: Any):
         token = str(random.randint(100000, 999999))
-        expires = datetime.utcnow().timestamp() + 90
         self.pending_confirmation_token = token
-        self.pending_confirmation_expires = datetime.utcfromtimestamp(expires).isoformat()
+        self.pending_confirmation_expires = self._utc_future_iso(90)
         self.pending_command_type = cmd_type
         self.pending_command_value_json = json.dumps(value)
         self.pending_confirmation_notice = (

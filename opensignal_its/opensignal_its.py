@@ -6,7 +6,7 @@ from .components.workspaces import (
     workspace_tabs,
 )
 from .services import OpsApiService, bootstrap_runtime_safety, start_retention_scheduler
-from .states.traffic_state import TrafficState
+from .states import TrafficState
 
 
 def _initialize_runtime() -> None:

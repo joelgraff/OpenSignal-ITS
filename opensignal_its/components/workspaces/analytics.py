@@ -1,6 +1,6 @@
 import reflex as rx
 
-from ...states.traffic_state import TrafficState
+from ...states import TrafficState
 from .event_rows import alarm_display_row, alarm_history_display_row, timeline_display_row
 from .section_card import workspace_section_card
 

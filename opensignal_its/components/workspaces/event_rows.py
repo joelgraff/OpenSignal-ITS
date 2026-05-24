@@ -1,6 +1,6 @@
 import reflex as rx
 
-from ...states.traffic_state import TrafficState
+from ...states import TrafficState
 
 
 def alarm_display_row(row: dict[str, str], selectable: bool = False) -> rx.Component:
