@@ -189,7 +189,7 @@ def analytics_workspace_section() -> rx.Component:
             width="100%",
         ),
         rx.text(
-            "Switch to Analytics workspace for event timeline and alarm triage tools.",
+            "Switch to Alarms & Events workspace for timeline and alarm triage tools.",
             size="1",
             color="gray",
         ),

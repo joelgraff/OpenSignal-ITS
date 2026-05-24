@@ -6,34 +6,34 @@ from .page_frame import workspace_page_frame
 
 def admin_workspace_page() -> rx.Component:
     return workspace_page_frame(
-        title="Admin & Access",
-        subtitle="Sign in to unlock signal sites, control, maintenance, and analytics pages.",
+        title="Sign-In & Roles",
+        subtitle="Sign in to access signal sites, control actions, maintenance, and alarms/events.",
         body=rx.vstack(
             rx.card(
                 rx.vstack(
-                    rx.heading("Operator Session", size="3"),
+                    rx.heading("Operator Sign-In", size="3"),
                     rx.input(
                         value=TrafficState.login_username_input,
                         on_change=TrafficState.update_login_username_input,
-                        placeholder="Operator username",
+                        placeholder="Operator sign-in name",
                         width="100%",
                     ),
                     rx.input(
                         value=TrafficState.login_password_input,
                         on_change=TrafficState.update_login_password_input,
-                        placeholder="Operator password",
+                        placeholder="Operator sign-in password",
                         type="password",
                         width="100%",
                     ),
                     rx.hstack(
                         rx.button(
-                            "Login Operator",
+                            "Sign In",
                             on_click=TrafficState.login_operator,
                             size="2",
                             color_scheme="green",
                         ),
                         rx.button(
-                            "Logout Operator",
+                            "Sign Out",
                             on_click=TrafficState.logout_operator,
                             size="2",
                             variant="outline",
@@ -50,11 +50,11 @@ def admin_workspace_page() -> rx.Component:
             ),
             rx.card(
                 rx.vstack(
-                    rx.heading("Recovery", size="3"),
+                    rx.heading("Admin Recovery", size="3"),
                     rx.input(
                         value=TrafficState.admin_recovery_key_input,
                         on_change=TrafficState.update_admin_recovery_key_input,
-                        placeholder="Admin recovery key",
+                        placeholder="Admin recovery key phrase",
                         type="password",
                         width="100%",
                     ),

@@ -89,17 +89,17 @@ class TrafficState(rx.State):
     retries_text: str = "1"
     device_profiles_json: str = "[]"
     selected_device_id: str = ""
-    fleet_status_summary: str = "Fleet view idle."
+    fleet_status_summary: str = "Signal site view idle."
     fleet_device_rows: list[str] = []
     fleet_status_by_id: dict[str, dict[str, Any]] = {}
     fleet_online_count: int = 0
     fleet_offline_count: int = 0
     fleet_total_count: int = 0
     managed_polling_interval_text: str = "5"
-    managed_polling_notice: str = "Managed polling idle."
-    runtime_registry_summary: str = "Runtime registry idle."
+    managed_polling_notice: str = "Site polling idle."
+    runtime_registry_summary: str = "Active poll sessions idle."
     runtime_registry_rows: list[str] = []
-    event_notice: str = "Event timeline idle."
+    event_notice: str = "Timeline feed idle."
     event_window: str = "1h"
     event_timeline_rows: list[str] = []
     alarm_rows: list[str] = []
@@ -400,7 +400,7 @@ class TrafficState(rx.State):
         self.fleet_offline_count = int(summary["offline"])
         if self.fleet_total_count > 0:
             self.fleet_status_summary = (
-                f"Fleet devices: {self.fleet_total_count} total, "
+                f"Signal sites: {self.fleet_total_count} total, "
                 f"{self.fleet_online_count} online, {self.fleet_offline_count} offline."
             )
 
@@ -811,13 +811,13 @@ class TrafficState(rx.State):
         try:
             profiles = self._fleet_profiles()
         except Exception as exc:
-            self.fleet_status_summary = f"Fleet profile parse failed: {exc}"
+            self.fleet_status_summary = f"Site profile parse failed: {exc}"
             self.fleet_device_rows = []
             self.error = self.fleet_status_summary
             return
 
         if not profiles:
-            self.fleet_status_summary = "Fleet profile list is empty; using single-device compatibility mode."
+            self.fleet_status_summary = "Site profile list is empty; using single-controller compatibility mode."
             self.fleet_device_rows = []
             return
 
@@ -869,7 +869,7 @@ class TrafficState(rx.State):
                 key_contains=self.alarm_history_key_filter,
             )
             self.event_notice = (
-                f"Event timeline refreshed ({self.event_window}): {len(self.event_timeline_rows)} entries, "
+                f"Timeline refreshed ({self.event_window}): {len(self.event_timeline_rows)} entries, "
                 f"{len(self.alarm_rows)} active alarms, "
                 f"{len(self.acknowledged_alarm_rows)} acknowledged alarms, "
                 f"{len(self.silenced_alarm_rows)} silenced alarms, "
@@ -877,7 +877,7 @@ class TrafficState(rx.State):
             )
             self.error = ""
         except Exception as exc:
-            self.event_notice = f"Event refresh failed: {exc}"
+            self.event_notice = f"Timeline refresh failed: {exc}"
             self.error = self.event_notice
 
     def acknowledge_selected_alarm(self):
@@ -972,19 +972,19 @@ class TrafficState(rx.State):
 
     async def start_fleet_managed_polling(self):
         if not self._is_role_authorized({"admin"}):
-            self.managed_polling_notice = "Fleet managed polling start denied: admin authentication required."
+            self.managed_polling_notice = "Site polling start denied: admin authentication required."
             self.error = self.managed_polling_notice
             return
 
         try:
             profiles = self._fleet_profiles()
         except Exception as exc:
-            self.managed_polling_notice = f"Fleet profile parse failed: {exc}"
+            self.managed_polling_notice = f"Site profile parse failed: {exc}"
             self.error = self.managed_polling_notice
             return
 
         if not profiles:
-            self.managed_polling_notice = "Fleet managed polling start skipped: no configured profiles."
+            self.managed_polling_notice = "Site polling start skipped: no configured site profiles."
             self.error = ""
             return
 
@@ -1005,9 +1005,7 @@ class TrafficState(rx.State):
             else:
                 failed += 1
 
-        self.managed_polling_notice = (
-            f"Fleet managed polling start complete: {started} succeeded, {failed} failed."
-        )
+        self.managed_polling_notice = f"Site polling start complete: {started} succeeded, {failed} failed."
         self.error = "" if failed == 0 else self.managed_polling_notice
         self.refresh_runtime_registry_status()
 
@@ -1024,19 +1022,19 @@ class TrafficState(rx.State):
 
     def stop_fleet_managed_polling(self):
         if not self._is_role_authorized({"admin"}):
-            self.managed_polling_notice = "Fleet managed polling stop denied: admin authentication required."
+            self.managed_polling_notice = "Site polling stop denied: admin authentication required."
             self.error = self.managed_polling_notice
             return
 
         try:
             profiles = self._fleet_profiles()
         except Exception as exc:
-            self.managed_polling_notice = f"Fleet profile parse failed: {exc}"
+            self.managed_polling_notice = f"Site profile parse failed: {exc}"
             self.error = self.managed_polling_notice
             return
 
         if not profiles:
-            self.managed_polling_notice = "Fleet managed polling stop skipped: no configured profiles."
+            self.managed_polling_notice = "Site polling stop skipped: no configured site profiles."
             self.error = ""
             return
 
@@ -1056,9 +1054,7 @@ class TrafficState(rx.State):
             else:
                 missing += 1
 
-        self.managed_polling_notice = (
-            f"Fleet managed polling stop complete: {stopped} stopped, {missing} not running."
-        )
+        self.managed_polling_notice = f"Site polling stop complete: {stopped} stopped, {missing} not running."
         self.error = ""
         self.refresh_runtime_registry_status()
 

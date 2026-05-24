@@ -7,19 +7,19 @@ from .page_frame import workspace_page_frame
 
 def settings_workspace_page() -> rx.Component:
     return workspace_page_frame(
-        title="Settings",
-        subtitle="Configure controller defaults and fleet profiles.",
+        title="Site Inventory",
+        subtitle="Configure controller defaults and site profile records.",
         body=rx.vstack(
-            rx.heading("Fleet Profiles", size="3"),
+            rx.heading("Signal Site Profiles", size="3"),
             configuration_workspace_fleet_profiles_editor(),
             rx.input(
                 value=TrafficState.selected_device_id,
                 on_change=TrafficState.update_selected_device_id,
-                placeholder="Selected device_id (optional)",
+                placeholder="Selected site ID (optional)",
                 width="100%",
             ),
             rx.button(
-                "Refresh Fleet",
+                "Refresh Site Inventory",
                 on_click=TrafficState.refresh_fleet_status,
                 size="2",
                 variant="outline",

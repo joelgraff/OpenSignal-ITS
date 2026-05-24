@@ -14,7 +14,7 @@ def configuration_workspace_fleet_profiles_editor() -> rx.Component:
             min_height="7em",
         ),
         rx.text(
-            "Advanced fleet JSON editor is available in the Config workspace.",
+            "Advanced site-inventory JSON editor is available in the Site Inventory workspace.",
             size="1",
             color="gray",
         ),

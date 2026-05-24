@@ -84,7 +84,7 @@ def monitor_workspace_page() -> rx.Component:
                     rx.input(
                         value=TrafficState.selected_device_id,
                         on_change=TrafficState.update_selected_device_id,
-                        placeholder="Selected device_id (optional)",
+                        placeholder="Selected site ID (optional)",
                         width="100%",
                     ),
                     workspace_section_card(
@@ -97,7 +97,7 @@ def monitor_workspace_page() -> rx.Component:
                                     f"Targeting site: {TrafficState.selected_device_id}",
                                     color_scheme="indigo",
                                 ),
-                                rx.badge("No specific site selected (fleet/default scope)", color_scheme="gray"),
+                                rx.badge("No specific site selected (all configured sites)", color_scheme="gray"),
                             ),
                             rx.text(TrafficState.fleet_status_summary, size="1", color="gray"),
                             rx.text(TrafficState.managed_polling_notice, size="1", color="gray"),
@@ -116,7 +116,7 @@ def monitor_workspace_page() -> rx.Component:
                         rx.input(
                             value=TrafficState.managed_polling_interval_text,
                             on_change=TrafficState.update_managed_polling_interval_text,
-                            placeholder="Managed poll sec",
+                            placeholder="Poll interval sec",
                             width="8em",
                         ),
                         rx.button(
@@ -153,7 +153,7 @@ def monitor_workspace_page() -> rx.Component:
                         align="center",
                     ),
                     rx.button(
-                        "Refresh Runtime Registry",
+                        "Refresh Active Poll Sessions",
                         on_click=TrafficState.refresh_runtime_registry_status,
                         size="2",
                         variant="outline",
@@ -176,7 +176,7 @@ def monitor_workspace_page() -> rx.Component:
                                         TrafficState.runtime_registry_rows,
                                         lambda row: rx.text(row, size="1", color="gray", font_family="monospace"),
                                     ),
-                                    rx.text("No runtime registry rows.", size="1", color="gray"),
+                                    rx.text("No active poll session rows.", size="1", color="gray"),
                                 ),
                                 max_height="180px",
                                 overflow_y="auto",
@@ -202,7 +202,7 @@ def monitor_workspace_page() -> rx.Component:
                                         TrafficState.fleet_device_rows,
                                         lambda row: rx.text(row, size="1", color="gray", font_family="monospace"),
                                     ),
-                                    rx.text("No fleet rows yet.", size="1", color="gray"),
+                                    rx.text("No signal site rows yet.", size="1", color="gray"),
                                 ),
                                 max_height="220px",
                                 overflow_y="auto",

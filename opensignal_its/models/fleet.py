@@ -33,7 +33,7 @@ class FleetRefreshView(BaseModel):
 
 
 class RuntimeRegistryView(BaseModel):
-    summary: str = "Runtime registry idle."
+    summary: str = "Active poll sessions idle."
     rows: list[str] = Field(default_factory=list)
     count: int = 0
     running_count: int = 0

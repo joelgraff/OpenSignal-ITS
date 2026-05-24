@@ -208,7 +208,7 @@ class FleetServiceTests(unittest.TestCase):
         view = FleetService.build_runtime_registry_view(status)
 
         self.assertIsInstance(view, RuntimeRegistryView)
-        self.assertIn("2 devices", view.summary)
+        self.assertIn("2 sites", view.summary)
         self.assertEqual(2, len(view.rows))
         self.assertIn("siemens_m60::a", view.rows[0])
         self.assertIn("siemens_m60::b (polling)", view.rows[1])
@@ -216,7 +216,7 @@ class FleetServiceTests(unittest.TestCase):
     def test_build_runtime_registry_view_handles_missing_fields(self):
         view = FleetService.build_runtime_registry_view({})
 
-        self.assertEqual("Runtime registry: 0 devices, 0 polling tasks running.", view.summary)
+        self.assertEqual("Active poll sessions: 0 sites, 0 polling loops running.", view.summary)
         self.assertEqual([], view.rows)
         self.assertEqual(0, int(view.count))
         self.assertEqual(0, int(view.running_count))

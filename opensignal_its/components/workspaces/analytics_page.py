@@ -6,7 +6,7 @@ from .page_frame import workspace_page_frame
 
 def analytics_workspace_page() -> rx.Component:
     return workspace_page_frame(
-        title="Analytics",
+        title="Alarms & Events",
         subtitle="Review event timelines and triage alarms quickly.",
         body=analytics_workspace_section(),
     )

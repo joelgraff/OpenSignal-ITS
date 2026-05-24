@@ -179,7 +179,7 @@ def dashboard():
                     ),
                     rx.badge(f"ROLE {TrafficState.current_role.upper()}", color_scheme="indigo"),
                     rx.badge(f"ALARMS {TrafficState.alarm_rows.length()}", color_scheme="orange"),
-                    rx.text(f"Selected: {TrafficState.selected_device_id}"),
+                    rx.text(f"Selected Site: {TrafficState.selected_device_id}"),
                     rx.text(f"Updated: {TrafficState.last_updated}"),
                     spacing="3",
                     wrap="wrap",
@@ -187,7 +187,7 @@ def dashboard():
                 ),
                 rx.text(
                     f"Pattern {TrafficState.current_pattern} | Unit {TrafficState.unit_status} | "
-                    f"SNMP {TrafficState.active_snmp_version} | Fleet {TrafficState.fleet_total_count} total "
+                    f"SNMP {TrafficState.active_snmp_version} | Signal Sites {TrafficState.fleet_total_count} total "
                     f"({TrafficState.fleet_online_count} online / {TrafficState.fleet_offline_count} offline)",
                     size="2",
                     color="gray",
@@ -197,7 +197,7 @@ def dashboard():
                     TrafficState.is_authenticated,
                     workspace_tabs(),
                     rx.text(
-                        "Sign in to access signal sites, control, maintenance, analytics, and configuration.",
+                        "Sign in to access signal sites, control, maintenance, alarms/events, and site inventory.",
                         size="2",
                         color="gray",
                     ),

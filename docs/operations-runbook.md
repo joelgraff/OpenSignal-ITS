@@ -159,27 +159,27 @@ Audit export writes are restricted to `OPENSIGNAL_AUDIT_EXPORT_DIR` (default `ru
 
 ### Managed Polling Runtime Controls
 
-Use fleet controls to manage long-lived runtime device polling tasks:
+Use site polling controls to manage long-lived controller polling tasks:
 
-1. Select a target device profile (`selected_device_id`).
+1. Select a target site profile (`selected_device_id`).
 2. Set managed polling interval seconds.
-3. Start or stop managed polling for the selected device.
-4. Refresh runtime registry to verify active runtime keys and running polling tasks.
-5. Use fleet-wide controls to start/stop polling across all configured profiles (admin-authenticated sessions only).
+3. Start or stop managed polling for the selected site.
+4. Refresh active poll sessions to verify running polling loops.
+5. Use site-wide controls to start/stop polling across all configured profiles (admin-authenticated sessions only).
 
 ### Event Timeline and Alarms
 
 The dashboard can compute event timeline and alarms from persisted command/snapshot activity:
 
-1. Use **Refresh Events** to rebuild timeline rows from recent command and snapshot history.
+1. Use **Refresh Timeline** to rebuild timeline rows from recent command and snapshot history.
 2. Use the window controls (**15m**, **1h**, **24h**, **All**) to focus on current incidents or review longer history.
 3. Offline streak alarm triggers when a device has N consecutive offline snapshots.
 4. Command failure streak alarm triggers when a device has N consecutive failed commands.
 5. Admin users can acknowledge alarms with a note and later clear acknowledgements.
 6. Alarm list is severity-prioritized (critical before high).
 7. Admin users can silence individual alarms for a bounded number of minutes; silenced alarms are hidden from active alarms until expiry or manual clear.
-8. Use **Use Silence Policy** to auto-fill silence duration from policy defaults.
-9. Review **Alarm Action History** to verify acknowledge/silence/clear activity with actor and timestamp.
+8. Use **Use Policy** to auto-fill silence duration from policy defaults.
+9. Review **Alarm History** to verify acknowledge/silence/clear activity with actor and timestamp.
 10. Use history filters to focus by action type, actor fragment, alarm key fragment, and row limit.
 
 Silence policy environment variables:
