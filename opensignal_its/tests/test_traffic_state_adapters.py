@@ -1,7 +1,9 @@
 import unittest
+from unittest.mock import patch
 
 from opensignal_its.models.event import AlarmDisplayRow, EventDisplayView, TimelineDisplayRow
 from opensignal_its.models.fleet import FleetDeviceStatus, FleetRefreshView, RuntimeRegistryView
+from opensignal_its.states.auth_state import AuthStateMixin
 from opensignal_its.states.event_state import _event_view_to_state_fields
 from opensignal_its.states.maintenance_state import _runtime_health_snapshot_to_state_fields
 from opensignal_its.states.polling_state import _runtime_registry_view_to_state_fields
@@ -139,6 +141,18 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertIn("command_audit=4", adapted["runtime_storage_summary"])
         self.assertIn("Scheduler: enabled, stopped, interval=300s", adapted["runtime_health_notice"])
 
+    def test_auth_state_static_limits_apply_bounds_and_fallbacks(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "OPENSIGNAL_MAX_LOGIN_ATTEMPTS": "0",
+                "OPENSIGNAL_LOGIN_LOCKOUT_SECONDS": "bad",
+            },
+            clear=False,
+        ):
+            self.assertEqual(1, AuthStateMixin._max_login_attempts())
+            self.assertEqual(300, AuthStateMixin._login_lockout_seconds())
+
 
     def test_traffic_state_exposes_event_state_members(self):
         required = [
@@ -192,6 +206,32 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "last_retention_cleanup_result",
             "run_retention_cleanup",
             "refresh_runtime_health",
+        ]
+
+        missing = [name for name in required if not hasattr(TrafficState, name)]
+
+        self.assertEqual([], missing)
+
+    def test_traffic_state_exposes_auth_state_members(self):
+        required = [
+            "login_username_input",
+            "login_password_input",
+            "is_authenticated",
+            "current_operator",
+            "current_role",
+            "auth_notice",
+            "failed_login_attempts",
+            "login_lockout_until",
+            "admin_recovery_key_input",
+            "admin_recovery_notice",
+            "update_login_username_input",
+            "update_login_password_input",
+            "update_admin_recovery_key_input",
+            "login_operator",
+            "logout_operator",
+            "reset_login_lockout",
+            "_actor_name",
+            "_is_role_authorized",
         ]
 
         missing = [name for name in required if not hasattr(TrafficState, name)]
