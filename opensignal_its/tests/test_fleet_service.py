@@ -93,6 +93,48 @@ class FleetServiceTests(unittest.TestCase):
         self.assertEqual(["int-2"], [p["device_id"] for p in FleetService.filter_profiles(profiles, "10.0.0.2")])
         self.assertEqual(["int-2"], [p["device_id"] for p in FleetService.filter_profiles(profiles, "int-2")])
 
+    def test_sort_profiles_orders_by_name_and_ip(self):
+        profiles = [
+            {
+                "device_id": "int-2",
+                "device_type": "siemens_m60",
+                "ip_address": "10.0.0.20",
+                "name": "Zulu",
+            },
+            {
+                "device_id": "int-1",
+                "device_type": "siemens_m60",
+                "ip_address": "10.0.0.3",
+                "name": "Alpha",
+            },
+        ]
+
+        by_name = FleetService.sort_profiles(profiles, "name")
+        by_ip_desc = FleetService.sort_profiles(profiles, "ip_address", descending=True)
+
+        self.assertEqual(["int-1", "int-2"], [p["device_id"] for p in by_name])
+        self.assertEqual(["int-2", "int-1"], [p["device_id"] for p in by_ip_desc])
+
+    def test_build_profile_display_rows_includes_status_metadata(self):
+        profiles = [
+            {"device_id": "int-1", "device_type": "siemens_m60", "ip_address": "10.0.0.1"},
+            {"device_id": "int-2", "device_type": "siemens_m60", "ip_address": "10.0.0.2"},
+            {"device_id": "int-3", "device_type": "siemens_m60", "ip_address": "10.0.0.3"},
+        ]
+        status_map = {
+            "int-1": {"is_online": True},
+            "int-2": {"is_online": False},
+        }
+
+        rows = FleetService.build_profile_display_rows(profiles, status_map)
+
+        self.assertEqual("Online", rows[0]["status_label"])
+        self.assertEqual("green", rows[0]["status_scheme"])
+        self.assertEqual("Offline", rows[1]["status_label"])
+        self.assertEqual("red", rows[1]["status_scheme"])
+        self.assertEqual("Unknown", rows[2]["status_label"])
+        self.assertEqual("gray", rows[2]["status_scheme"])
+
     def test_build_profile_from_form_validates_and_normalizes(self):
         profile = FleetService.build_profile_from_form(
             device_id="int-1",

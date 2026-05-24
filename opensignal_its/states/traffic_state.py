@@ -88,9 +88,11 @@ class TrafficState(rx.State):
     timeout_text: str = "3"
     retries_text: str = "1"
     device_profiles_json: str = "[]"
-    controller_profile_rows: list[str] = []
+    controller_profile_rows: list[dict[str, Any]] = []
     controller_profile_notice: str = "No controller profiles configured yet."
     controller_profile_filter_text: str = ""
+    controller_profile_sort_key: str = "device_id"
+    controller_profile_sort_desc: bool = False
     controller_profile_form_error: str = ""
     controller_profile_original_device_id: str = ""
     controller_profile_form_device_id: str = ""
@@ -199,6 +201,21 @@ class TrafficState(rx.State):
 
     def update_controller_profile_filter_text(self, value: str):
         self.controller_profile_filter_text = value
+        self._sync_controller_profile_rows()
+
+    def update_controller_profile_sort_key(self, value: str):
+        normalized = value.strip().lower()
+        if normalized not in {"device_id", "name", "ip_address"}:
+            return
+        if self.controller_profile_sort_key == normalized:
+            self.controller_profile_sort_desc = not self.controller_profile_sort_desc
+        else:
+            self.controller_profile_sort_key = normalized
+            self.controller_profile_sort_desc = False
+        self._sync_controller_profile_rows()
+
+    def toggle_controller_profile_sort_direction(self):
+        self.controller_profile_sort_desc = not self.controller_profile_sort_desc
         self._sync_controller_profile_rows()
 
     def update_controller_profile_form_device_id(self, value: str):
@@ -475,7 +492,15 @@ class TrafficState(rx.State):
             return []
 
         filtered_profiles = FleetService.filter_profiles(profiles, self.controller_profile_filter_text)
-        self.controller_profile_rows = FleetService.build_profile_rows(filtered_profiles)
+        ordered_profiles = FleetService.sort_profiles(
+            filtered_profiles,
+            self.controller_profile_sort_key,
+            self.controller_profile_sort_desc,
+        )
+        self.controller_profile_rows = FleetService.build_profile_display_rows(
+            ordered_profiles,
+            self.fleet_status_by_id,
+        )
         summary_suffix = ""
         query = self.controller_profile_filter_text.strip()
         if query and profiles:
@@ -531,8 +556,7 @@ class TrafficState(rx.State):
         self.controller_profile_notice = f"Loaded controller profile {target}."
         self.controller_profile_form_error = ""
 
-    def load_controller_profile_from_row(self, row: str):
-        device_id = row.split(" | ", 1)[0].strip()
+    def load_controller_profile_from_row(self, device_id: str):
         self.load_controller_profile(device_id)
 
     def save_controller_profile(self):
@@ -653,6 +677,7 @@ class TrafficState(rx.State):
             rows.append(row)
         self.fleet_device_rows = rows
         self._refresh_fleet_aggregate_fields()
+        self._sync_controller_profile_rows()
 
     def _parse_timestamp(self, ts: str) -> datetime | None:
         if not ts:
@@ -1046,6 +1071,7 @@ class TrafficState(rx.State):
         if not profiles:
             self.fleet_status_summary = "Controller profile list is empty; using single-controller compatibility mode."
             self.fleet_device_rows = []
+            self._sync_controller_profile_rows()
             return
 
         refresh_view = await FleetService.collect_refresh_view(
@@ -1057,6 +1083,7 @@ class TrafficState(rx.State):
         self.selected_device_id = str(adapted["selected_device_id"])
         self.fleet_status_by_id = dict(adapted["fleet_status_by_id"])
         self.fleet_device_rows = list(adapted["fleet_device_rows"])
+        self._sync_controller_profile_rows()
         self._refresh_fleet_aggregate_fields()
         self.refresh_runtime_registry_status()
 

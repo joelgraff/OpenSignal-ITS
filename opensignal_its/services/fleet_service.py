@@ -162,6 +162,36 @@ class FleetService:
         return [FleetService.format_profile_row(profile) for profile in profiles]
 
     @staticmethod
+    def build_profile_display_rows(
+        profiles: list[dict[str, Any]],
+        status_map: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for profile in profiles:
+            normalized = FleetService.normalize_profile(profile)
+            device_id = normalized["device_id"]
+            status_payload = dict(status_map.get(device_id, {}))
+            if "is_online" not in status_payload:
+                status_label = "Unknown"
+                status_scheme = "gray"
+            elif bool(status_payload.get("is_online", False)):
+                status_label = "Online"
+                status_scheme = "green"
+            else:
+                status_label = "Offline"
+                status_scheme = "red"
+
+            rows.append(
+                {
+                    "device_id": device_id,
+                    "label": FleetService.format_profile_row(normalized),
+                    "status_label": status_label,
+                    "status_scheme": status_scheme,
+                }
+            )
+        return rows
+
+    @staticmethod
     def filter_profiles(
         profiles: list[dict[str, Any]],
         query: str,
@@ -184,6 +214,26 @@ class FleetService:
             if normalized_query in haystack:
                 filtered.append(normalized)
         return filtered
+
+    @staticmethod
+    def sort_profiles(
+        profiles: list[dict[str, Any]],
+        sort_key: str,
+        descending: bool = False,
+    ) -> list[dict[str, Any]]:
+        normalized_profiles = [FleetService.normalize_profile(profile) for profile in profiles]
+        normalized_key = sort_key.strip().lower()
+
+        def _sort_value(profile: dict[str, Any]):
+            if normalized_key == "name":
+                return str(profile.get("name", "")).strip().lower(), profile["device_id"].lower()
+            if normalized_key == "ip_address":
+                return ip_address(str(profile["ip_address"])), profile["device_id"].lower()
+            if normalized_key == "device_type":
+                return str(profile.get("device_type", "")).strip().lower(), profile["device_id"].lower()
+            return profile["device_id"].lower(), str(profile.get("name", "")).strip().lower()
+
+        return sorted(normalized_profiles, key=_sort_value, reverse=descending)
 
     @staticmethod
     def build_device_config(profile: dict[str, Any]) -> DeviceConfig:

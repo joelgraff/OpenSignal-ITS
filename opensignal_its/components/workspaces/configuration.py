@@ -4,6 +4,16 @@ from ...states.traffic_state import TrafficState
 from .section_card import workspace_section_card
 
 
+def _sort_button(label: str, sort_key: str) -> rx.Component:
+    return rx.button(
+        label,
+        on_click=lambda: TrafficState.update_controller_profile_sort_key(sort_key),
+        size="1",
+        variant=rx.cond(TrafficState.controller_profile_sort_key == sort_key, "solid", "soft"),
+        color_scheme=rx.cond(TrafficState.controller_profile_sort_key == sort_key, "indigo", "gray"),
+    )
+
+
 def _controller_profile_roster() -> rx.Component:
     return workspace_section_card(
         title="Configured Controllers",
@@ -16,6 +26,16 @@ def _controller_profile_roster() -> rx.Component:
                 size="1",
                 max_width="16em",
             ),
+            _sort_button("ID", "device_id"),
+            _sort_button("Name", "name"),
+            _sort_button("IP", "ip_address"),
+            rx.button(
+                rx.cond(TrafficState.controller_profile_sort_desc, "Desc", "Asc"),
+                on_click=TrafficState.toggle_controller_profile_sort_direction,
+                size="1",
+                variant="soft",
+                color_scheme="gray",
+            ),
             rx.button(
                 "New",
                 on_click=TrafficState.new_controller_profile,
@@ -24,6 +44,7 @@ def _controller_profile_roster() -> rx.Component:
             ),
             spacing="2",
             align="center",
+            wrap="wrap",
         ),
         body=rx.vstack(
             rx.text(TrafficState.controller_profile_notice, size="1", color="gray"),
@@ -33,8 +54,18 @@ def _controller_profile_roster() -> rx.Component:
                     rx.foreach(
                         TrafficState.controller_profile_rows,
                         lambda row: rx.button(
-                            row,
-                            on_click=lambda: TrafficState.load_controller_profile_from_row(row),
+                            rx.hstack(
+                                rx.badge(
+                                    row["status_label"],
+                                    color_scheme=row["status_scheme"],
+                                    size="1",
+                                ),
+                                rx.text(row["label"], size="1", text_align="left"),
+                                spacing="2",
+                                align="center",
+                                width="100%",
+                            ),
+                            on_click=lambda: TrafficState.load_controller_profile_from_row(row["device_id"]),
                             variant="ghost",
                             size="1",
                             width="100%",
