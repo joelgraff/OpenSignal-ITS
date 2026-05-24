@@ -1,7 +1,9 @@
 import unittest
 
+from opensignal_its.models.event import AlarmDisplayRow, EventDisplayView, TimelineDisplayRow
 from opensignal_its.models.fleet import FleetDeviceStatus, FleetRefreshView
-from opensignal_its.states.traffic_state import _fleet_view_to_state_fields
+from opensignal_its.states.event_state import _event_view_to_state_fields
+from opensignal_its.states.traffic_state import TrafficState, _fleet_view_to_state_fields
 
 
 class TrafficStateAdapterTests(unittest.TestCase):
@@ -41,6 +43,63 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertIsNone(adapted["selected_payload"])
         self.assertEqual(1, int(adapted["selected_mp_model"]))
         self.assertEqual("siemens_m60", adapted["selected_device_type"])
+
+    def test_event_view_to_state_fields_maps_event_rows(self):
+        view = EventDisplayView(
+            timeline=[
+                TimelineDisplayRow(
+                    timestamp="2026-05-23T00:00:00+00:00",
+                    kind="snapshot",
+                    kind_label="Snapshot",
+                    kind_scheme="gray",
+                    device_ip="10.0.0.1",
+                    summary="Status Snapshot",
+                    detail="Poll | Online",
+                    status_label="Online",
+                    status_scheme="green",
+                )
+            ],
+            alarms=[
+                AlarmDisplayRow(
+                    alarm_key="ALARM severity=critical type=offline-streak device=10.0.0.1 threshold=2",
+                    severity="critical",
+                    severity_label="Critical",
+                    severity_scheme="red",
+                    alarm_type="offline-streak",
+                    summary="Offline Streak",
+                    device_ip="10.0.0.1",
+                    detail="Threshold 2",
+                    state_label="Active",
+                    state_scheme="orange",
+                )
+            ],
+        )
+
+        adapted = _event_view_to_state_fields(view)
+
+        self.assertEqual("Snapshot", adapted["event_timeline_rows"][0]["kind_label"])
+        self.assertEqual("10.0.0.1", adapted["event_timeline_rows"][0]["device_ip"])
+        self.assertEqual("Offline Streak", adapted["alarm_rows"][0]["summary"])
+        self.assertEqual([], adapted["acknowledged_alarm_rows"])
+        self.assertEqual([], adapted["silenced_alarm_rows"])
+
+    def test_traffic_state_exposes_event_state_members(self):
+        required = [
+            "event_notice",
+            "event_window",
+            "event_timeline_rows",
+            "alarm_rows",
+            "alarm_history_rows",
+            "selected_alarm_key",
+            "refresh_events_and_alarms",
+            "acknowledge_selected_alarm",
+            "apply_selected_alarm_silence_policy",
+            "update_alarm_history_action_filter",
+        ]
+
+        missing = [name for name in required if not hasattr(TrafficState, name)]
+
+        self.assertEqual([], missing)
 
 
 if __name__ == "__main__":
