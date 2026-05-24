@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 class OpsApiRoutesTests(unittest.TestCase):
@@ -58,6 +59,26 @@ class OpsApiRoutesTests(unittest.TestCase):
         routes = self._ops_routes(app_module)
 
         self.assertEqual({}, routes)
+
+    def test_app_import_defers_runtime_initialization_to_lifespan(self):
+        with (
+            patch("opensignal_its.services.bootstrap_runtime_safety") as bootstrap_mock,
+            patch("opensignal_its.services.start_retention_scheduler") as scheduler_mock,
+        ):
+            app_module = self._load_app_module()
+
+            bootstrap_mock.assert_not_called()
+            scheduler_mock.assert_not_called()
+
+            lifespan_tasks = app_module.app.get_lifespan_tasks()
+            runtime_task = next(
+                task for task in lifespan_tasks if getattr(task, "__name__", "") == "_initialize_runtime"
+            )
+
+            runtime_task()
+
+            bootstrap_mock.assert_called_once_with()
+            scheduler_mock.assert_called_once_with()
 
     def test_ops_route_denies_invalid_token(self):
         os.environ["OPENSIGNAL_OPS_API_ENABLED"] = "true"

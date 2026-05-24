@@ -9,8 +9,9 @@ from .services import OpsApiService, bootstrap_runtime_safety, start_retention_s
 from .states.traffic_state import TrafficState
 
 
-bootstrap_runtime_safety()
-start_retention_scheduler()
+def _initialize_runtime() -> None:
+    bootstrap_runtime_safety()
+    start_retention_scheduler()
 
 
 def dashboard():
@@ -112,6 +113,7 @@ def dashboard():
     )
 
 app = rx.App()
+app.register_lifespan_task(_initialize_runtime)
 app.add_page(dashboard, route="/", title="OpenSignal ITS")
 OPS_API_ENDPOINTS: dict[str, object] = {}
 
