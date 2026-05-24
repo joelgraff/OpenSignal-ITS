@@ -1,12 +1,15 @@
+import asyncio
 import unittest
 from unittest.mock import patch
 
 from opensignal_its.models.event import AlarmDisplayRow, EventDisplayView, TimelineDisplayRow
 from opensignal_its.models.fleet import FleetDeviceStatus, FleetRefreshView, RuntimeRegistryView
 from opensignal_its.states.auth_state import AuthStateMixin
+from opensignal_its.states.command_state import CommandStateMixin
 from opensignal_its.states.configuration_state import ConfigurationStateMixin
 from opensignal_its.states.event_state import _event_view_to_state_fields
 from opensignal_its.states.maintenance_state import _runtime_health_snapshot_to_state_fields
+from opensignal_its.states.monitor_state import MonitorStateMixin
 from opensignal_its.states.polling_state import _runtime_registry_view_to_state_fields
 from opensignal_its.states.safety_state import SafetyStateMixin
 from opensignal_its.states.traffic_state import TrafficState, _fleet_view_to_state_fields
@@ -194,6 +197,46 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual(1, len(probe.controller_profile_rows))
         self.assertIn("1 controller profile configured.", probe.controller_profile_notice)
 
+    def test_monitor_state_build_config_normalizes_input(self):
+        class _MonitorProbe(MonitorStateMixin):
+            ip_address = "166.156.88.223"
+            port_text = "161"
+            community = "public"
+            snmp_version = "auto"
+            timeout_text = "3"
+            retries_text = "1"
+
+        probe = _MonitorProbe()
+        probe.ip_address = " 10.0.0.8 "
+        probe.port_text = "2161"
+        probe.community = " public-ro "
+        probe.snmp_version = " V1 "
+        probe.timeout_text = "4.5"
+        probe.retries_text = "2"
+
+        config = probe._build_config()
+
+        self.assertEqual("10.0.0.8", config.ip_address)
+        self.assertEqual(2161, config.port)
+        self.assertEqual("public-ro", config.community)
+        self.assertEqual("v1", config.snmp_version)
+        self.assertEqual(4.5, config.timeout_seconds)
+        self.assertEqual(2, config.retries)
+
+    def test_command_state_select_pattern_wrapper_delegates_to_send_command(self):
+        class _CommandProbe(CommandStateMixin):
+            def __init__(self):
+                self.calls = []
+
+            async def send_command(self, cmd_type, value, force_confirmed=False):
+                self.calls.append((cmd_type, value, force_confirmed))
+
+        probe = _CommandProbe()
+
+        asyncio.run(probe.select_pattern_1())
+
+        self.assertEqual([("select_pattern", 1, False)], probe.calls)
+
 
     def test_traffic_state_exposes_event_state_members(self):
         required = [
@@ -346,6 +389,72 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "save_controller_profile",
             "delete_controller_profile",
             "open_selected_controller_status",
+        ]
+
+        missing = [name for name in required if not hasattr(TrafficState, name)]
+
+        self.assertEqual([], missing)
+
+    def test_traffic_state_exposes_monitor_state_members(self):
+        required = [
+            "m60_status",
+            "m60_status_json",
+            "status_text",
+            "active_snmp_version",
+            "current_pattern",
+            "unit_status",
+            "ring_status_summary",
+            "phase_data",
+            "is_online",
+            "last_updated",
+            "ip_address",
+            "port_text",
+            "community",
+            "snmp_version",
+            "timeout_text",
+            "retries_text",
+            "selected_device_id",
+            "monitor_detail_tab",
+            "monitor_view",
+            "update_ip_address",
+            "update_port_text",
+            "update_community",
+            "update_snmp_version",
+            "update_selected_device_id",
+            "update_timeout_text",
+            "update_retries_text",
+            "update_monitor_detail_tab",
+            "update_monitor_view",
+            "open_intersection_detail",
+            "back_to_dashboard",
+            "select_controller_from_row",
+            "_build_config",
+            "_selected_device_target",
+            "_parse_timestamp",
+            "_poll_delta_seconds",
+            "_apply_phase_payload",
+            "_collect_selected_status_snapshot",
+            "_apply_status_snapshot",
+            "add_and_poll_m60",
+            "connect_m60",
+            "refresh_status",
+            "connect_and_start_polling",
+        ]
+
+        missing = [name for name in required if not hasattr(TrafficState, name)]
+
+        self.assertEqual([], missing)
+
+    def test_traffic_state_exposes_command_state_members(self):
+        required = [
+            "_safe_log_command",
+            "send_command",
+            "select_pattern_1",
+            "select_pattern_2",
+            "set_mode_free",
+            "set_mode_coordinated",
+            "manual_hold",
+            "advance_phase",
         ]
 
         missing = [name for name in required if not hasattr(TrafficState, name)]
