@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import reflex as rx
+
 from ..models.fleet import RuntimeRegistryView
 from ..services import FleetService, PollingService
 
@@ -15,7 +17,7 @@ def _runtime_registry_view_to_state_fields(view: RuntimeRegistryView) -> dict[st
     }
 
 
-class PollingStateMixin:
+class PollingStateMixin(rx.State, mixin=True):
     managed_polling_interval_text: str = "5"
     managed_polling_notice: str = "Controller polling idle."
     runtime_registry_summary: str = "Active poll sessions idle."

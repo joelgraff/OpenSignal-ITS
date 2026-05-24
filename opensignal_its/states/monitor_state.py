@@ -5,13 +5,15 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import reflex as rx
+
 from ..devices.parsers import build_siemens_m60_view
 from ..db import STORE
 from ..models.device import DeviceConfig
 from ..services import FleetService, PollingService
 
 
-class MonitorStateMixin:
+class MonitorStateMixin(rx.State, mixin=True):
     m60_status: dict = {}
     m60_status_json: str = ""
     status_text: str = "No status yet"

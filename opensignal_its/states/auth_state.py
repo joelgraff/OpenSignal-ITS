@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 
+import reflex as rx
+
 from ..services import OperatorAuthService
 
 
@@ -16,7 +18,7 @@ _LOGIN_DISABLED = os.getenv("OPENSIGNAL_DISABLE_LOGIN", "1").strip().lower() in 
 _LOGIN_BYPASS_OPERATOR = os.getenv("OPENSIGNAL_BYPASS_OPERATOR", "local-access").strip() or "local-access"
 
 
-class AuthStateMixin:
+class AuthStateMixin(rx.State, mixin=True):
     login_username_input: str = ""
     login_password_input: str = ""
     is_authenticated: bool = _LOGIN_DISABLED

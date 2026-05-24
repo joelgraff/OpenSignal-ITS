@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import reflex as rx
+
 from ..services import MaintenanceService, OpsApiService, scheduler_status
 
 
@@ -87,7 +89,7 @@ def _runtime_health_snapshot_to_state_fields(
     }
 
 
-class MaintenanceStateMixin:
+class MaintenanceStateMixin(rx.State, mixin=True):
     maintenance_notice: str = ""
     runtime_health_notice: str = "Runtime health not refreshed yet."
     runtime_storage_summary: str = "Storage health not refreshed yet."

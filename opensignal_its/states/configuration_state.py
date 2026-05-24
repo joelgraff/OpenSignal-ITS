@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+import reflex as rx
+
 from ..services import FleetService
 
 
-class ConfigurationStateMixin:
+class ConfigurationStateMixin(rx.State, mixin=True):
     device_profiles_json: str = "[]"
     controller_profile_rows: list[dict[str, Any]] = []
     controller_profile_notice: str = "No controller profiles configured yet."

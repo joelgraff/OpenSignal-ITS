@@ -2,6 +2,8 @@ import asyncio
 import unittest
 from unittest.mock import patch
 
+import reflex as rx
+
 from opensignal_its.models.event import AlarmDisplayRow, EventDisplayView, TimelineDisplayRow
 from opensignal_its.models.fleet import FleetDeviceStatus, FleetRefreshView, RuntimeRegistryView
 from opensignal_its.states.auth_state import AuthStateMixin
@@ -163,10 +165,10 @@ class TrafficStateAdapterTests(unittest.TestCase):
             self.assertEqual(300, AuthStateMixin._login_lockout_seconds())
 
     def test_safety_state_write_unlock_seconds_applies_bounds_and_fallbacks(self):
-        class _SafetyProbe(SafetyStateMixin):
-            write_unlock_seconds_text = "120"
+        class _SafetyProbe(SafetyStateMixin, rx.State):
+            write_unlock_seconds_text: str = "120"
 
-        probe = _SafetyProbe()
+        probe = _SafetyProbe(_reflex_internal_init=True)
         probe.write_unlock_seconds_text = "5"
         self.assertEqual(15, probe._write_unlock_seconds())
 
@@ -174,8 +176,8 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual(120, probe._write_unlock_seconds())
 
     def test_configuration_state_sync_controller_profile_rows_builds_notice_and_rows(self):
-        class _ConfigurationProbe(ConfigurationStateMixin):
-            device_profiles_json = """[
+        class _ConfigurationProbe(ConfigurationStateMixin, rx.State):
+            device_profiles_json: str = """[
                 {
                     "device_id": "int-1",
                     "name": "Main & 1st",
@@ -188,12 +190,12 @@ class TrafficStateAdapterTests(unittest.TestCase):
                     "retries": 1
                 }
             ]"""
-            controller_profile_filter_text = ""
-            controller_profile_sort_key = "device_id"
-            controller_profile_sort_desc = False
-            fleet_status_by_id = {}
+            controller_profile_filter_text: str = ""
+            controller_profile_sort_key: str = "device_id"
+            controller_profile_sort_desc: bool = False
+            fleet_status_by_id: dict[str, object] = {}
 
-        probe = _ConfigurationProbe()
+        probe = _ConfigurationProbe(_reflex_internal_init=True)
 
         profiles = probe._sync_controller_profile_rows()
 
@@ -202,15 +204,15 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertIn("1 controller profile configured.", probe.controller_profile_notice)
 
     def test_monitor_state_build_config_normalizes_input(self):
-        class _MonitorProbe(MonitorStateMixin):
-            ip_address = "166.156.88.223"
-            port_text = "161"
-            community = "public"
-            snmp_version = "auto"
-            timeout_text = "3"
-            retries_text = "1"
+        class _MonitorProbe(MonitorStateMixin, rx.State):
+            ip_address: str = "166.156.88.223"
+            port_text: str = "161"
+            community: str = "public"
+            snmp_version: str = "auto"
+            timeout_text: str = "3"
+            retries_text: str = "1"
 
-        probe = _MonitorProbe()
+        probe = _MonitorProbe(_reflex_internal_init=True)
         probe.ip_address = " 10.0.0.8 "
         probe.port_text = "2161"
         probe.community = " public-ro "
@@ -228,25 +230,25 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual(2, config.retries)
 
     def test_command_state_select_pattern_wrapper_delegates_to_send_command(self):
-        class _CommandProbe(CommandStateMixin):
-            def __init__(self):
-                self.calls = []
+        class _CommandProbe(CommandStateMixin, rx.State):
+            calls: list[tuple[object, object, object]] = []
 
             async def send_command(self, cmd_type, value, force_confirmed=False):
                 self.calls.append((cmd_type, value, force_confirmed))
 
-        probe = _CommandProbe()
+        probe = _CommandProbe(_reflex_internal_init=True)
+        probe.calls = []
 
         asyncio.run(probe.select_pattern_1())
 
         self.assertEqual([("select_pattern", 1, False)], probe.calls)
 
     def test_fleet_state_interval_helpers_apply_bounds_and_fallbacks(self):
-        class _FleetProbe(FleetStateMixin):
-            refresh_interval_text = "5"
-            reconnect_interval_text = "10"
+        class _FleetProbe(FleetStateMixin, rx.State):
+            refresh_interval_text: str = "5"
+            reconnect_interval_text: str = "10"
 
-        probe = _FleetProbe()
+        probe = _FleetProbe(_reflex_internal_init=True)
         probe.refresh_interval_text = "0"
         self.assertEqual(1.0, probe._refresh_interval_seconds())
 
@@ -260,14 +262,13 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual(10.0, probe._reconnect_interval_seconds())
 
     def test_audit_state_export_requires_admin_authorization(self):
-        class _AuditProbe(AuditStateMixin):
-            def __init__(self):
-                self.error = ""
+        class _AuditProbe(AuditStateMixin, rx.State):
+            error: str = ""
 
             def _is_role_authorized(self, allowed_roles):
                 return False
 
-        probe = _AuditProbe()
+        probe = _AuditProbe(_reflex_internal_init=True)
 
         probe.export_audit_report()
 
@@ -275,10 +276,10 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual(probe.audit_export_notice, probe.error)
 
     def test_time_state_helpers_parse_deltas_and_expiration(self):
-        class _TimeProbe(TimeStateMixin):
+        class _TimeProbe(TimeStateMixin, rx.State):
             pass
 
-        probe = _TimeProbe()
+        probe = _TimeProbe(_reflex_internal_init=True)
 
         self.assertIsNone(probe._parse_timestamp("not-a-timestamp"))
         self.assertEqual(5, probe._poll_delta_seconds("2026-05-23T00:00:00+00:00", "2026-05-23T00:00:05+00:00"))
@@ -287,15 +288,13 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertFalse(probe._has_expired(probe._utc_future_iso(60)))
 
     def test_workspace_state_updates_mode_and_syncs_configuration(self):
-        class _WorkspaceProbe(WorkspaceStateMixin):
-            def __init__(self):
-                self.ui_workspace_mode = "monitor"
-                self.synced = False
+        class _WorkspaceProbe(WorkspaceStateMixin, rx.State):
+            synced: bool = False
 
             def _sync_controller_profile_rows(self):
                 self.synced = True
 
-        probe = _WorkspaceProbe()
+        probe = _WorkspaceProbe(_reflex_internal_init=True)
 
         probe.update_ui_workspace_mode("configuration")
 
@@ -594,6 +593,20 @@ class TrafficStateAdapterTests(unittest.TestCase):
         ]
 
         missing = [name for name in required if not hasattr(TrafficState, name)]
+
+        self.assertEqual([], missing)
+
+    def test_traffic_state_registers_inherited_mixin_vars(self):
+        required = [
+            "is_online",
+            "alarm_rows",
+            "safe_command_probe",
+            "current_operator",
+            "fleet_total_count",
+            "ui_workspace_mode",
+        ]
+
+        missing = [name for name in required if name not in TrafficState.vars]
 
         self.assertEqual([], missing)
 

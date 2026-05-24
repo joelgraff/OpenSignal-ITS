@@ -6,11 +6,13 @@ import json
 from typing import Any
 from uuid import uuid4
 
+import reflex as rx
+
 from ..db import CommandAuditRecord, STORE
 from ..services import CommandSafetyService, CommandService
 
 
-class CommandStateMixin:
+class CommandStateMixin(rx.State, mixin=True):
     def _safe_log_command(
         self,
         cmd_type: str,

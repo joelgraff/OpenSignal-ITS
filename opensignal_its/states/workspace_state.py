@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 
-class WorkspaceStateMixin:
+import reflex as rx
+
+
+class WorkspaceStateMixin(rx.State, mixin=True):
     ui_workspace_mode: str = "monitor"
 
     def update_ui_workspace_mode(self, value: str):

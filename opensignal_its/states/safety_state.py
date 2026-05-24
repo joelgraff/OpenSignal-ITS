@@ -6,10 +6,12 @@ import json
 import random
 from typing import Any
 
+import reflex as rx
+
 from ..services import CommandSafetyService
 
 
-class SafetyStateMixin:
+class SafetyStateMixin(rx.State, mixin=True):
     safe_command_probe: bool = True
     operator_key_input: str = ""
     write_unlock_seconds_text: str = "120"

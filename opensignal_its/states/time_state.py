@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import reflex as rx
 
-class TimeStateMixin:
+
+class TimeStateMixin(rx.State, mixin=True):
     @staticmethod
     def _utc_now_iso() -> str:
         return datetime.now(UTC).isoformat()

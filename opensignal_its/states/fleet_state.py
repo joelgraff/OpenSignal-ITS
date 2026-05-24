@@ -26,7 +26,7 @@ def _fleet_view_to_state_fields(refresh_view: FleetRefreshView) -> dict[str, Any
     }
 
 
-class FleetStateMixin:
+class FleetStateMixin(rx.State, mixin=True):
     fleet_status_summary: str = "Controller view idle."
     fleet_device_rows: list[str] = []
     fleet_status_by_id: dict[str, dict[str, Any]] = {}

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import os
 
+import reflex as rx
+
 from ..db import STORE
 
 
-class AuditStateMixin:
+class AuditStateMixin(rx.State, mixin=True):
     audit_export_notice: str = ""
     audit_export_path: str = ""
 

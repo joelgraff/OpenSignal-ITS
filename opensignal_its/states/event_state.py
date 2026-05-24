@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import reflex as rx
+
 from ..models.event import EventDisplayView
 from ..services import EventService
 
@@ -27,7 +29,7 @@ def _alarm_history_rows_to_state_fields(rows: list[dict[str, str]]) -> dict[str,
     }
 
 
-class EventStateMixin:
+class EventStateMixin(rx.State, mixin=True):
     event_notice: str = "Timeline feed idle."
     event_window: str = "1h"
     event_timeline_rows: list[dict[str, str]] = []
