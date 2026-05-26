@@ -84,12 +84,12 @@ def _dashboard_stat_strip() -> rx.Component:
         rx.divider(orientation="vertical", size="1"),
         _stat_pill("Updated", TrafficState.last_updated, "#4338ca"),
         rx.spacer(),
-        rx.button(
-            "Refresh",
-            on_click=TrafficState.refresh_fleet_status,
-            size="1",
-            variant="outline",
-        ),
+            rx.button(
+                "Refresh once",
+                on_click=TrafficState.refresh_fleet_status,
+                size="1",
+                variant="outline",
+            ),
         rx.button(
             "Manage Controllers",
             on_click=lambda: TrafficState.update_ui_workspace_mode("configuration"),
@@ -109,11 +109,32 @@ def _dashboard_map_panel() -> rx.Component:
             rx.hstack(
                 rx.text("Signal map", size="1", color="#1f2937", font_weight="600"),
                 rx.spacer(),
+                rx.cond(
+                    TrafficState.controller_profile_map_point_latitude_text != "",
+                    rx.badge(
+                        f"Selected {TrafficState.controller_profile_map_point_latitude_text}, {TrafficState.controller_profile_map_point_longitude_text}",
+                        color_scheme="green",
+                        size="1",
+                        variant="soft",
+                    ),
+                    rx.badge(
+                        "Click map to place a pin",
+                        color_scheme="gray",
+                        size="1",
+                        variant="soft",
+                    ),
+                ),
                 rx.badge(f"Mapped {TrafficState.fleet_map_markers.length()}", color_scheme="indigo", size="1"),
                 rx.badge(
                     f"Need Coordinates {TrafficState.fleet_unmapped_device_ids.length()}",
                     color_scheme="amber",
                     size="1",
+                ),
+                rx.button(
+                    "Add",
+                    on_click=TrafficState.open_controller_profile_creation_dialog,
+                    size="1",
+                    color_scheme="green",
                 ),
                 spacing="1",
                 width="100%",
@@ -124,11 +145,11 @@ def _dashboard_map_panel() -> rx.Component:
                 size="1",
                 color="gray",
             ),
-            rx.text(
-                "Click an empty point on the map to add a controller. Click a marker to open intersection detail.",
-                size="1",
-                color="gray",
-            ),
+                rx.text(
+                    "Click once to place a pin, drag it if needed, and click Add to open the create dialog. Double-click still zooms. Click a marker to open intersection detail and refresh once.",
+                    size="1",
+                    color="gray",
+                ),
             rx.box(
                 rx.el.iframe(
                     src_doc=TrafficState.fleet_map_src_doc,
@@ -295,11 +316,11 @@ def _map_controller_creation_dialog() -> rx.Component:
 
 def _dashboard_controller_list() -> rx.Component:
     return rx.vstack(
-        rx.text(
-            "Select a controller to open its intersection detail and poll focus.",
-            size="1",
-            color="gray",
-        ),
+            rx.text(
+                "Select a controller to open its intersection detail; it refreshes once on open.",
+                size="1",
+                color="gray",
+            ),
         rx.hstack(
             rx.button(
                 "All",
@@ -384,7 +405,7 @@ def _dashboard_controller_list() -> rx.Component:
                             spacing="1",
                             align="start",
                         ),
-                        on_click=lambda: TrafficState.select_controller_from_row(row["device_id"]),
+                        on_click=TrafficState.select_controller_from_row(row["device_id"]),
                         variant=rx.cond(
                             row["device_id"] == TrafficState.selected_device_id,
                             "soft",
@@ -423,7 +444,7 @@ def _dashboard_view() -> rx.Component:
             workspace_section_card(
                 title="Signal Map",
                 body=_dashboard_map_panel(),
-                subtitle="Controllers with stored coordinates appear on the map. Click a marker to open intersection detail.",
+                subtitle="Controllers with stored coordinates appear on the map. Click a marker to open intersection detail and refresh once.",
             ),
             workspace_section_card(
                 title="Controllers",
@@ -446,38 +467,59 @@ def _dashboard_view() -> rx.Component:
 
 
 def _intersection_breadcrumb() -> rx.Component:
-    return rx.hstack(
-        rx.button(
-            "\u2190 Overview",
-            on_click=TrafficState.back_to_dashboard,
-            size="1",
-            variant="ghost",
+    return rx.vstack(
+        rx.hstack(
+            rx.button(
+                "\u2190 Overview",
+                on_click=TrafficState.back_to_dashboard,
+                size="1",
+                variant="ghost",
+            ),
+            rx.text("/", size="1", color="gray"),
+            rx.text("Intersection Detail", size="1", color="gray"),
+            rx.spacer(),
+            rx.input(
+                value=TrafficState.selected_device_id,
+                on_change=TrafficState.update_selected_device_id,
+                placeholder="Controller ID",
+                size="1",
+                max_width="10em",
+            ),
+            rx.button(
+                "Connect & poll",
+                on_click=TrafficState.connect_and_start_polling,
+                size="1",
+                color_scheme="green",
+                is_disabled=TrafficState.is_loading,
+            ),
+            rx.button(
+                "Refresh once",
+                on_click=TrafficState.refresh_status,
+                size="1",
+                variant="outline",
+                is_disabled=TrafficState.is_loading,
+            ),
+            rx.button(
+                "Stop polling",
+                on_click=TrafficState.stop_selected_managed_polling,
+                size="1",
+                variant="ghost",
+                color_scheme="red",
+            ),
+            spacing="2",
+            align="center",
+            width="100%",
+            wrap="wrap",
         ),
-        rx.text("/", size="1", color="gray"),
-        rx.text("Intersection Detail", size="1", color="gray"),
-        rx.spacer(),
-        rx.input(
-            value=TrafficState.selected_device_id,
-            on_change=TrafficState.update_selected_device_id,
-            placeholder="Controller ID",
+        rx.text(TrafficState.managed_polling_notice, size="1", color="gray"),
+        rx.text(
+            f"Refresh once fetches a single snapshot. Connect & poll starts managed polling every {TrafficState.managed_polling_interval_text}s.",
             size="1",
-            max_width="10em",
+            color="gray",
         ),
-        rx.button(
-            "Connect",
-            on_click=TrafficState.connect_and_start_polling,
-            size="1",
-        ),
-        rx.button(
-            "Refresh",
-            on_click=TrafficState.refresh_status,
-            size="1",
-            variant="outline",
-        ),
-        spacing="2",
-        align="center",
+        spacing="1",
+        align="start",
         width="100%",
-        wrap="wrap",
     )
 
 
@@ -501,6 +543,11 @@ def _intersection_header_card() -> rx.Component:
             rx.badge(
                 rx.cond(TrafficState.is_online, "Online", "Offline"),
                 color_scheme=rx.cond(TrafficState.is_online, "green", "red"),
+                size="2",
+            ),
+            rx.badge(
+                TrafficState.status_text,
+                color_scheme="gray",
                 size="2",
             ),
             rx.badge(
@@ -763,7 +810,7 @@ def _intersection_view() -> rx.Component:
                         ring_status_console_text=TrafficState.ring_status_console_text,
                     ),
                     rx.text(
-                        "Connect and poll to render the live phase diagram.",
+                        "Refresh once to load a snapshot, or Connect & poll to keep updating the live phase diagram.",
                         size="1",
                         color="gray",
                     ),

@@ -14,7 +14,7 @@ from opensignal_its.states.event_state import _event_view_to_state_fields
 from opensignal_its.states.fleet_state import FleetStateMixin, _fleet_view_to_state_fields
 from opensignal_its.states.maintenance_state import _runtime_health_snapshot_to_state_fields
 from opensignal_its.states.monitor_state import MonitorStateMixin
-from opensignal_its.states.polling_state import _runtime_registry_view_to_state_fields
+from opensignal_its.states.polling_state import PollingStateMixin, _runtime_registry_view_to_state_fields
 from opensignal_its.states.safety_state import SafetyStateMixin
 from opensignal_its.states.time_state import TimeStateMixin
 from opensignal_its.states.traffic_state import TrafficState
@@ -398,25 +398,150 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual("Connected via SNMP v1", probe.status_text)
         self.assertEqual(("int-1", "siemens_m60", payload), probe.cached_status)
 
-    def test_monitor_state_opens_controller_creation_dialog_from_map_point(self):
+    def test_monitor_state_refreshes_after_row_selection(self):
+        class _MonitorRowProbe(MonitorStateMixin, rx.State):
+            selected_device_id: str = ""
+            monitor_view: str = "dashboard"
+            refresh_called: bool = False
+
+            async def refresh_status(self):
+                self.refresh_called = True
+
+        probe = _MonitorRowProbe(_reflex_internal_init=True)
+
+        asyncio.run(probe.select_controller_from_row("int-2 | Broadway"))
+
+        self.assertTrue(probe.refresh_called)
+        self.assertEqual("int-2", probe.selected_device_id)
+        self.assertEqual("intersection", probe.monitor_view)
+
+    def test_monitor_state_selects_controller_creation_point_from_map_click(self):
         class _MonitorCreateProbe(ConfigurationStateMixin, MonitorStateMixin, rx.State):
             controller_profile_creation_dialog_open: bool = False
+            controller_profile_map_point_latitude_text: str = ""
+            controller_profile_map_point_longitude_text: str = ""
             controller_profile_form_latitude_text: str = ""
             controller_profile_form_longitude_text: str = ""
 
         probe = _MonitorCreateProbe(_reflex_internal_init=True)
 
-        probe.sync_map_selection_from_storage(
+        asyncio.run(probe.sync_map_selection_from_storage(
             "opensignal-map-create-controller",
             "",
             '{"latitude": 40.7128, "longitude": -74.0060, "source": "map-click"}',
             "http://localhost:3000/",
+        ))
+
+        self.assertFalse(probe.controller_profile_creation_dialog_open)
+        self.assertEqual("40.7128", probe.controller_profile_map_point_latitude_text)
+        self.assertEqual("-74.006", probe.controller_profile_map_point_longitude_text)
+        self.assertEqual("Selected a map point. Click Add to open the controller dialog.", probe.controller_profile_notice)
+
+    def test_monitor_state_refreshes_after_map_selection(self):
+        class _MonitorMapProbe(MonitorStateMixin, rx.State):
+            selected_device_id: str = ""
+            monitor_view: str = "dashboard"
+            refresh_called: bool = False
+
+            async def refresh_status(self):
+                self.refresh_called = True
+
+        probe = _MonitorMapProbe(_reflex_internal_init=True)
+
+        asyncio.run(
+            probe.sync_map_selection_from_storage(
+                "opensignal-map-selection",
+                "",
+                "int-7::12345",
+                "http://localhost:3000/",
+            )
         )
+
+        self.assertTrue(probe.refresh_called)
+        self.assertEqual("int-7", probe.selected_device_id)
+        self.assertEqual("intersection", probe.monitor_view)
+
+    def test_monitor_state_connect_and_start_polling_starts_managed_polling(self):
+        class _MonitorConnectProbe(MonitorStateMixin, PollingStateMixin, rx.State):
+            is_online: bool = False
+            managed_polling_notice: str = ""
+            managed_polling_interval_text: str = "7"
+            runtime_registry_summary: str = ""
+            runtime_registry_rows: list[str] = []
+            health_refreshed: bool = False
+            registry_refreshed: bool = False
+            connect_called: bool = False
+            start_called: bool = False
+
+            def refresh_runtime_health(self):
+                self.health_refreshed = True
+
+            def refresh_runtime_registry_status(self):
+                self.registry_refreshed = True
+
+            async def connect_m60(self):
+                self.connect_called = True
+                self.is_online = True
+
+            async def start_selected_managed_polling(self):
+                self.start_called = True
+                self.managed_polling_notice = "Managed polling started. Refreshing every 7s."
+
+        probe = _MonitorConnectProbe(_reflex_internal_init=True)
+
+        asyncio.run(probe.connect_and_start_polling())
+
+        self.assertTrue(probe.connect_called)
+        self.assertTrue(probe.start_called)
+        self.assertTrue(probe.health_refreshed)
+        self.assertTrue(probe.registry_refreshed)
+        self.assertIn("Refreshing every 7s.", probe.managed_polling_notice)
+
+    def test_polling_state_start_selected_managed_polling_announces_interval(self):
+        class _PollingProbe(PollingStateMixin, rx.State):
+            selected_device_id: str = "int-1"
+            managed_polling_interval_text: str = "7"
+            managed_polling_notice: str = ""
+            error: str = ""
+            runtime_registry_refreshed: bool = False
+
+            def _selected_device_target(self):
+                return (
+                    "siemens_m60",
+                    "int-1",
+                    type("_Config", (), {"ip_address": "10.0.0.1", "port": 161, "community": "public", "snmp_version": "v1", "timeout_seconds": 3.0, "retries": 1, "name": "Fake"})(),
+                )
+
+            def refresh_runtime_registry_status(self):
+                self.runtime_registry_refreshed = True
+
+        async def _fake_start_managed_polling(device_type, config, device_id="", interval_seconds=5):
+            return True, f"Managed polling started for {device_id}."
+
+        probe = _PollingProbe(_reflex_internal_init=True)
+
+        with patch(
+            "opensignal_its.states.polling_state.PollingService.start_managed_polling",
+            side_effect=_fake_start_managed_polling,
+        ):
+            asyncio.run(probe.start_selected_managed_polling())
+
+        self.assertTrue(probe.runtime_registry_refreshed)
+        self.assertIn("Refreshing every 7s.", probe.managed_polling_notice)
+
+    def test_configuration_state_open_controller_creation_dialog_uses_selected_map_point(self):
+        class _ConfigurationCreateProbe(ConfigurationStateMixin, rx.State):
+            controller_profile_map_point_latitude_text: str = "40.7128"
+            controller_profile_map_point_longitude_text: str = "-74.006"
+
+        probe = _ConfigurationCreateProbe(_reflex_internal_init=True)
+
+        probe.open_controller_profile_creation_dialog()
 
         self.assertTrue(probe.controller_profile_creation_dialog_open)
         self.assertEqual("40.7128", probe.controller_profile_form_latitude_text)
         self.assertEqual("-74.006", probe.controller_profile_form_longitude_text)
-        self.assertEqual("Create a controller at the selected map point.", probe.controller_profile_notice)
+        self.assertIn("selected map point", probe.controller_profile_notice.lower())
 
     def test_command_state_select_pattern_wrapper_delegates_to_send_command(self):
         class _CommandProbe(CommandStateMixin, rx.State):
@@ -627,6 +752,8 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "controller_profile_form_retries_text",
             "controller_profile_form_latitude_text",
             "controller_profile_form_longitude_text",
+            "controller_profile_map_point_latitude_text",
+            "controller_profile_map_point_longitude_text",
             "controller_profile_creation_dialog_open",
             "update_device_profiles_json",
             "update_controller_profile_filter_text",
@@ -645,8 +772,9 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "update_controller_profile_form_retries_text",
             "update_controller_profile_form_latitude_text",
             "update_controller_profile_form_longitude_text",
+            "select_controller_profile_map_point",
             "set_controller_profile_creation_dialog_open",
-            "open_controller_profile_creation_from_map_point",
+            "open_controller_profile_creation_dialog",
             "close_controller_profile_creation_dialog",
             "new_controller_profile",
             "load_controller_profile",

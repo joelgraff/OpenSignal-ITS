@@ -47,7 +47,12 @@ class PollingStateMixin(rx.State, mixin=True):
             device_id=device_id,
             interval_seconds=self._managed_polling_interval_seconds(),
         )
-        self.managed_polling_notice = message
+        if ok:
+            self.managed_polling_notice = (
+                f"{message} Refreshing every {self._managed_polling_interval_seconds()}s."
+            )
+        else:
+            self.managed_polling_notice = message
         self.error = "" if ok else message
         self.refresh_runtime_registry_status()
 

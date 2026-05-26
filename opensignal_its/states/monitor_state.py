@@ -91,7 +91,7 @@ class MonitorStateMixin(rx.State, mixin=True):
     def back_to_dashboard(self):
         self.monitor_view = "dashboard"
 
-    def select_controller_from_row(self, row: str):
+    async def select_controller_from_row(self, row: str):
         tokenized = row.strip().split()
         if tokenized:
             self.selected_device_id = tokenized[0]
@@ -102,8 +102,9 @@ class MonitorStateMixin(rx.State, mixin=True):
             refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
             if callable(refresh_map):
                 refresh_map()
+            await self.refresh_status()
 
-    def select_controller_from_map_points(self, points: list[dict[str, Any]]):
+    async def select_controller_from_map_points(self, points: list[dict[str, Any]]):
         if not points:
             return
 
@@ -129,8 +130,9 @@ class MonitorStateMixin(rx.State, mixin=True):
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):
             refresh_map()
+        await self.refresh_status()
 
-    def sync_map_selection_from_storage(
+    async def sync_map_selection_from_storage(
         self,
         key: str,
         old_value: str,
@@ -154,6 +156,7 @@ class MonitorStateMixin(rx.State, mixin=True):
             refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
             if callable(refresh_map):
                 refresh_map()
+            await self.refresh_status()
             return
 
         if key != FleetService.MAP_CREATE_STORAGE_KEY:
@@ -182,9 +185,18 @@ class MonitorStateMixin(rx.State, mixin=True):
         except (TypeError, ValueError):
             return
 
-        open_dialog = getattr(self, "open_controller_profile_creation_from_map_point", None)
-        if callable(open_dialog):
-            open_dialog(latitude_value, longitude_value)
+        select_map_point = getattr(self, "select_controller_profile_map_point", None)
+        if callable(select_map_point):
+            select_map_point(latitude_value, longitude_value)
+
+        update_form_latitude = getattr(self, "update_controller_profile_form_latitude_text", None)
+        update_form_longitude = getattr(self, "update_controller_profile_form_longitude_text", None)
+        dialog_open = bool(getattr(self, "controller_profile_creation_dialog_open", False))
+        if dialog_open and callable(update_form_latitude) and callable(update_form_longitude):
+            formatted_latitude = f"{float(latitude_value):.6f}".rstrip("0").rstrip(".")
+            formatted_longitude = f"{float(longitude_value):.6f}".rstrip("0").rstrip(".")
+            update_form_latitude(formatted_latitude)
+            update_form_longitude(formatted_longitude)
 
     def _build_config(self) -> DeviceConfig:
         port = int(self.port_text)
@@ -344,13 +356,18 @@ class MonitorStateMixin(rx.State, mixin=True):
         finally:
             self.is_loading = False
 
-        if (self.auto_refresh_enabled or self.auto_reconnect_enabled) and not self.auto_refresh_running:
-            return type(self).auto_refresh_loop
-
     async def refresh_status(self):
+        self.managed_polling_notice = "Refreshing selected controller once..."
         await self.add_and_poll_m60()
+        self.managed_polling_notice = "Refreshed selected controller once."
 
     async def connect_and_start_polling(self):
         self.refresh_runtime_health()
         self.refresh_runtime_registry_status()
-        return await self.connect_m60()
+        self.managed_polling_notice = "Connecting and starting managed polling..."
+        await self.connect_m60()
+        if self.is_online:
+            await self.start_selected_managed_polling()
+        else:
+            self.managed_polling_notice = "Controller connect failed; managed polling was not started."
+            self.refresh_runtime_registry_status()

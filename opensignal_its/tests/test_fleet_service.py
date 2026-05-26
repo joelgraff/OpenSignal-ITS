@@ -450,6 +450,9 @@ class FleetServiceTests(unittest.TestCase):
         self.assertIn(FleetService.MAP_SELECTION_STORAGE_KEY, src_doc)
         self.assertIn(FleetService.MAP_CREATE_STORAGE_KEY, src_doc)
         self.assertIn("map.on('click'", src_doc)
+        self.assertIn("doubleClickZoom: true", src_doc)
+        self.assertIn("draggable: true", src_doc)
+        self.assertIn("selection-pin__outer", src_doc)
         self.assertIn("dispatchEvent(new StorageEvent('storage'", src_doc)
         self.assertIn("int-1", src_doc)
 

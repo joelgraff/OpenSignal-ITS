@@ -44,14 +44,14 @@ def dashboard():
                         TrafficState.is_authenticated,
                         rx.hstack(
                             rx.button(
-                                "Connect",
+                                "Connect & poll",
                                 on_click=TrafficState.connect_and_start_polling,
                                 is_disabled=TrafficState.is_loading,
                                 color_scheme="green",
                                 size="1",
                             ),
                             rx.button(
-                                "Refresh",
+                                "Refresh once",
                                 on_click=TrafficState.refresh_status,
                                 is_disabled=TrafficState.is_loading,
                                 size="1",

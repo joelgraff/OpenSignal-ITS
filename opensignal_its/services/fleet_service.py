@@ -544,6 +544,27 @@ class FleetService:
             font-size: 13px;
             margin-bottom: 4px;
         }
+        .selection-pin {
+            background: transparent;
+            border: none;
+        }
+        .selection-pin__outer {
+            display: block;
+            width: 20px;
+            height: 20px;
+            background: linear-gradient(180deg, #fbbf24 0%, #f59e0b 100%);
+            border: 3px solid #ffffff;
+            border-radius: 50% 50% 50% 0;
+            transform: rotate(-45deg);
+            box-shadow: 0 10px 18px rgba(15, 23, 42, 0.24);
+            position: relative;
+        }
+        .selection-pin__inner {
+            position: absolute;
+            inset: 4px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.92);
+        }
     </style>
 </head>
 <body>
@@ -570,6 +591,16 @@ class FleetService:
             const defaultLon = Number.isFinite(mapMeta.defaultLon) ? mapMeta.defaultLon : -98.5795;
             const defaultZoom = Number.isFinite(mapMeta.defaultZoom) ? mapMeta.defaultZoom : 4;
 
+            const selectionIcon = L.divIcon({
+                className: 'selection-pin',
+                html: '<span class="selection-pin__outer"><span class="selection-pin__inner"></span></span>',
+                iconSize: [24, 24],
+                iconAnchor: [12, 22],
+                popupAnchor: [0, -22],
+            });
+
+            let selectionMarker = null;
+
             const writeStorageEvent = (key, value) => {
                 try {
                     const previousValue = window.parent.localStorage.getItem(key);
@@ -593,12 +624,69 @@ class FleetService:
             const map = L.map('map', {
                 zoomControl: true,
                 scrollWheelZoom: true,
+                doubleClickZoom: true,
             });
+            window.__opensignalMap = map;
 
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 maxZoom: 19,
                 attribution: '&copy; OpenStreetMap contributors',
             }).addTo(map);
+
+            const setSelectionPoint = (latitude, longitude, shouldBroadcast = true) => {
+                const nextLatitude = Number(latitude);
+                const nextLongitude = Number(longitude);
+                if (!Number.isFinite(nextLatitude) || !Number.isFinite(nextLongitude)) {
+                    return;
+                }
+
+                const payload = JSON.stringify({
+                    latitude: nextLatitude,
+                    longitude: nextLongitude,
+                    source: 'map-point',
+                    timestamp: Date.now(),
+                });
+
+                if (!selectionMarker) {
+                    selectionMarker = L.marker([nextLatitude, nextLongitude], {
+                        draggable: true,
+                        icon: selectionIcon,
+                        autoPan: true,
+                        bubblingMouseEvents: false,
+                        riseOnHover: true,
+                        zIndexOffset: 1000,
+                    }).addTo(map);
+
+                    selectionMarker.on('dragend', (event) => {
+                        const latlng = event.target.getLatLng();
+                        setSelectionPoint(latlng.lat, latlng.lng, true);
+                    });
+                } else {
+                    selectionMarker.setLatLng([nextLatitude, nextLongitude]);
+                }
+
+                if (shouldBroadcast) {
+                    writeStorageEvent(creationStorageKey, payload);
+                }
+            };
+
+            const restoreSelectionPoint = () => {
+                try {
+                    const rawSelection = window.parent.localStorage.getItem(creationStorageKey) || localStorage.getItem(creationStorageKey);
+                    if (!rawSelection) {
+                        return;
+                    }
+
+                    const selection = JSON.parse(rawSelection);
+                    if (!selection || selection.latitude === undefined || selection.longitude === undefined) {
+                        return;
+                    }
+
+                    setSelectionPoint(selection.latitude, selection.longitude, true);
+                } catch (error) {
+                    // The selection pin is best-effort.
+                }
+            };
 
             const bounds = [];
 
@@ -631,14 +719,15 @@ class FleetService:
                 bounds.push([marker.latitude, marker.longitude]);
             });
 
+            restoreSelectionPoint();
+
+            if (selectionMarker) {
+                const selectedLatLng = selectionMarker.getLatLng();
+                bounds.push([selectedLatLng.lat, selectedLatLng.lng]);
+            }
+
             map.on('click', (event) => {
-                const payload = JSON.stringify({
-                    latitude: event.latlng.lat,
-                    longitude: event.latlng.lng,
-                    source: 'map-click',
-                    timestamp: Date.now(),
-                });
-                writeStorageEvent(creationStorageKey, payload);
+                setSelectionPoint(event.latlng.lat, event.latlng.lng, true);
             });
 
             if (bounds.length === 1) {
