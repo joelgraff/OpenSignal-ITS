@@ -2,13 +2,17 @@ const { test, expect } = require('@playwright/test');
 
 const adminUsername = process.env.PLAYWRIGHT_ADMIN_USERNAME || 'admin';
 const adminPassword = process.env.PLAYWRIGHT_ADMIN_PASSWORD || 'adminpass123456';
+const e2eDeviceId = 'e2e-map-unmapped';
+const e2eLocation = 'Playwright & Pine';
 
 test('auth gate and workspace navigation stay functional', async ({ page }) => {
   await page.goto('/', { waitUntil: 'networkidle' });
   await expect(page.locator('[title^="Connection Error:"]')).toHaveCount(0);
 
-  await expect(page.getByText('SIGN-IN REQUIRED')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Access' })).toBeVisible();
+  await expect(page.getByPlaceholder('Operator sign-in name')).toBeVisible();
+  await expect(page.getByPlaceholder('Operator sign-in password')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign In' })).toBeVisible();
   await expect(page.getByText('Operator not authenticated.')).toBeVisible();
 
   await page.getByPlaceholder('Operator sign-in name').fill(adminUsername);
@@ -16,7 +20,7 @@ test('auth gate and workspace navigation stay functional', async ({ page }) => {
   await page.getByRole('button', { name: 'Sign In' }).click();
 
   await expect(page.getByText('ROLE ADMIN')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Overview' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Network Overview' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Signal Map' })).toBeVisible();
 
@@ -40,11 +44,29 @@ test('auth gate and workspace navigation stay functional', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Controllers' }).first()).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Controller Profiles' })).toBeVisible();
 
+  await page.getByRole('textbox', { name: 'Controller ID', exact: true }).fill(e2eDeviceId);
+  await page.getByRole('textbox', { name: 'Display name', exact: true }).fill('Playwright Unmapped');
+  await page.getByRole('textbox', { name: 'Location label / intersection', exact: true }).fill(e2eLocation);
+  await page.getByRole('textbox', { name: 'IP address', exact: true }).fill('10.0.0.50');
+  await page.getByRole('button', { name: 'Add Profile' }).click();
+  await expect(page.getByText(`Saved controller profile ${e2eDeviceId}.`)).toBeVisible();
+
+  await page.getByRole('button', { name: 'Overview', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Network Overview' })).toBeVisible();
+  await expect(page.getByText('Awaiting coordinates. Open a controller below to record them.')).toBeVisible();
+  await page.getByRole('button', { name: new RegExp(e2eLocation) }).first().click();
+
+  await expect(page.getByRole('heading', { name: 'Controllers' }).first()).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Controller ID', exact: true })).toHaveValue(e2eDeviceId);
+  await expect(page.getByRole('textbox', { name: 'Location label / intersection', exact: true })).toHaveValue(e2eLocation);
+  await expect(page.getByText(`Opened Controllers for ${e2eDeviceId}.`)).toBeVisible();
+
   await page.getByRole('button', { name: 'Access' }).click();
   await expect(page.getByRole('heading', { name: 'Access' })).toBeVisible();
   await expect(page.getByText('Authenticated as admin (admin).')).toBeVisible();
 
   await page.getByRole('button', { name: 'Sign Out' }).click();
-  await expect(page.getByText('SIGN-IN REQUIRED')).toBeVisible();
+  await expect(page.getByPlaceholder('Operator sign-in name')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign In' })).toBeVisible();
   await expect(page.getByText('Operator not authenticated.')).toBeVisible();
 });

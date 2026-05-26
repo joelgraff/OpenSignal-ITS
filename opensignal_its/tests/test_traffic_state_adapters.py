@@ -288,6 +288,36 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual(["int-2"], [row["device_id"] for row in probe.fleet_status_cards])
         self.assertEqual("Showing 1 controller needing coordinates.", probe.fleet_status_card_notice)
 
+    def test_fleet_state_refresh_fleet_map_fields_builds_friendly_unmapped_rows(self):
+        class _FleetProbe(FleetStateMixin, rx.State):
+            device_profiles_json: str = """[
+                {
+                    "device_id": "int-1",
+                    "name": "Broadway",
+                    "location_name": "Broadway & Pine",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.1"
+                },
+                {
+                    "device_id": "int-2",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.2",
+                    "latitude": 40.7128,
+                    "longitude": -74.0060
+                }
+            ]"""
+            selected_device_id: str = ""
+            fleet_status_by_id: dict[str, object] = {}
+
+        probe = _FleetProbe(_reflex_internal_init=True)
+
+        probe._refresh_fleet_map_fields()
+
+        self.assertEqual(["int-1"], probe.fleet_unmapped_device_ids)
+        self.assertEqual(["int-1"], [row["device_id"] for row in probe.fleet_unmapped_profile_rows])
+        self.assertEqual("Broadway & Pine", probe.fleet_unmapped_profile_rows[0]["title"])
+        self.assertEqual("Coordinates not set", probe.fleet_unmapped_profile_rows[0]["coordinate_text"])
+
     def test_monitor_state_build_config_normalizes_input(self):
         class _MonitorProbe(MonitorStateMixin, rx.State):
             ip_address: str = "166.156.88.223"
@@ -628,6 +658,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "fleet_status_card_notice",
             "fleet_map_markers",
             "fleet_unmapped_device_ids",
+            "fleet_unmapped_profile_rows",
             "fleet_map_data",
             "fleet_map_layout",
             "fleet_map_figure",

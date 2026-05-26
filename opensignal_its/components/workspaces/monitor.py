@@ -54,13 +54,20 @@ def _detail_tab_button(label: str, tab_key: str) -> rx.Component:
     )
 
 
-def _unmapped_profile_button(device_id: str) -> rx.Component:
+def _unmapped_profile_button(row: dict[str, str]) -> rx.Component:
     return rx.button(
-        device_id,
-        on_click=lambda: TrafficState.open_controller_profile_editor(device_id),
-        size="1",
+        rx.vstack(
+            rx.text(row["title"], size="1", font_weight="600", text_align="left"),
+            rx.text(row["subtitle"], size="1", color="gray", text_align="left"),
+            spacing="0",
+            align="start",
+            width="100%",
+        ),
+        on_click=lambda: TrafficState.open_controller_profile_editor(row["device_id"]),
+        size="2",
         variant="soft",
         color_scheme="amber",
+        justify_content="start",
     )
 
 
@@ -129,7 +136,7 @@ def _dashboard_map_panel() -> rx.Component:
                     height="360px",
                 ),
                 rx.cond(
-                    TrafficState.fleet_unmapped_device_ids != [],
+                    TrafficState.fleet_unmapped_profile_rows != [],
                     rx.center(
                         rx.vstack(
                             rx.heading("Add coordinates to place controllers on the map.", size="4"),
@@ -141,7 +148,7 @@ def _dashboard_map_panel() -> rx.Component:
                             ),
                             rx.box(
                                 rx.foreach(
-                                    TrafficState.fleet_unmapped_device_ids,
+                                    TrafficState.fleet_unmapped_profile_rows,
                                     _unmapped_profile_button,
                                 ),
                                 display="flex",
@@ -178,7 +185,7 @@ def _dashboard_map_panel() -> rx.Component:
                 ),
             ),
             rx.cond(
-                TrafficState.fleet_unmapped_device_ids != [],
+                TrafficState.fleet_unmapped_profile_rows != [],
                 rx.vstack(
                     rx.text(
                         "Awaiting coordinates. Open a controller below to record them.",
@@ -187,7 +194,7 @@ def _dashboard_map_panel() -> rx.Component:
                     ),
                     rx.box(
                         rx.foreach(
-                            TrafficState.fleet_unmapped_device_ids,
+                            TrafficState.fleet_unmapped_profile_rows,
                             _unmapped_profile_button,
                         ),
                         display="flex",

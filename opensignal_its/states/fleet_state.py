@@ -58,6 +58,7 @@ class FleetStateMixin(rx.State, mixin=True):
     fleet_status_card_notice: str = "No controller profiles are configured yet."
     fleet_map_markers: list[dict[str, Any]] = []
     fleet_unmapped_device_ids: list[str] = []
+    fleet_unmapped_profile_rows: list[dict[str, str]] = []
     fleet_map_data: list[dict[str, Any]] = []
     fleet_map_layout: dict[str, Any] = {}
     fleet_map_figure: dict[str, Any] = {}
@@ -152,9 +153,14 @@ class FleetStateMixin(rx.State, mixin=True):
             self.fleet_status_by_id,
             self.selected_device_id,
         )
-        unmapped = FleetService.list_unmapped_profiles(profiles)
+        unmapped_profiles = FleetService.filter_profiles_by_mapping(profiles, "unmapped")
+        unmapped = FleetService.list_unmapped_profiles(unmapped_profiles)
         self.fleet_map_markers = markers
         self.fleet_unmapped_device_ids = unmapped
+        self.fleet_unmapped_profile_rows = FleetService.build_profile_display_rows(
+            unmapped_profiles,
+            self.fleet_status_by_id,
+        )
         self.fleet_map_data = FleetService.build_map_data(markers)
         self.fleet_map_layout = FleetService.build_map_layout(markers)
         self.fleet_map_figure = {
@@ -222,6 +228,7 @@ class FleetStateMixin(rx.State, mixin=True):
             self.fleet_status_card_notice = "Fix controller profile JSON to populate the controller list."
             self.fleet_map_markers = []
             self.fleet_unmapped_device_ids = []
+            self.fleet_unmapped_profile_rows = []
             self.fleet_map_data = []
             self.fleet_map_layout = {}
             self.fleet_map_figure = {}
