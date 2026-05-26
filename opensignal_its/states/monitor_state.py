@@ -124,6 +124,30 @@ class MonitorStateMixin(rx.State, mixin=True):
         if callable(refresh_map):
             refresh_map()
 
+    def sync_map_selection_from_storage(
+        self,
+        key: str,
+        old_value: str,
+        new_value: str,
+        url: str,
+    ):
+        if key != FleetService.MAP_SELECTION_STORAGE_KEY:
+            return
+
+        raw_value = str(new_value).strip()
+        if not raw_value:
+            return
+
+        selected_device_id = raw_value.split("::", 1)[0].strip()
+        if not selected_device_id:
+            return
+
+        self.selected_device_id = selected_device_id
+        self.monitor_view = "intersection"
+        refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
+        if callable(refresh_map):
+            refresh_map()
+
     def _build_config(self) -> DeviceConfig:
         port = int(self.port_text)
         timeout_seconds = float(self.timeout_text)
@@ -191,6 +215,15 @@ class MonitorStateMixin(rx.State, mixin=True):
         payload, mp_model = await PollingService.collect_snapshot(device_type, config, device_id=device_id)
         return device_id, device_type, payload, mp_model
 
+    async def _collect_selected_connection_status(self) -> tuple[str, str, dict, int]:
+        device_type, device_id, config = self._selected_device_target()
+        payload, mp_model = await PollingService.collect_connection_status(
+            device_type,
+            config,
+            device_id=device_id,
+        )
+        return device_id, device_type, payload, mp_model
+
     def _apply_status_snapshot(self, status_payload: dict, mp_model: int):
         """Apply one status snapshot to state fields used by the UI."""
         previous_updated = self.last_updated
@@ -249,7 +282,30 @@ class MonitorStateMixin(rx.State, mixin=True):
             self.is_loading = False
 
     async def connect_m60(self):
-        await self.add_and_poll_m60()
+        self.is_loading = True
+        try:
+            try:
+                device_id, device_type, status_payload, mp_model = await self._collect_selected_connection_status()
+            except ValueError:
+                self.m60_status = {
+                    "error": "Port, timeout, and retries must be numeric.",
+                }
+                self.m60_status_json = json.dumps(self.m60_status, indent=2)
+                self.error = self.m60_status["error"]
+                self.status_text = "Input validation failed"
+                self.is_online = False
+                return
+            self._apply_status_snapshot(status_payload, mp_model)
+            self._cache_device_status(device_id, device_type, status_payload)
+        except Exception as exc:
+            self.m60_status = {"error": f"Unhandled exception: {exc}"}
+            self.m60_status_json = json.dumps(self.m60_status, indent=2)
+            self.error = self.m60_status["error"]
+            self.status_text = "Unhandled exception"
+            self.is_online = False
+        finally:
+            self.is_loading = False
+
         if (self.auto_refresh_enabled or self.auto_reconnect_enabled) and not self.auto_refresh_running:
             return type(self).auto_refresh_loop
 

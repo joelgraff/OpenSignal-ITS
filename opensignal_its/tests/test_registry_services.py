@@ -52,6 +52,17 @@ class RegistryServicesTests(unittest.TestCase):
         self.assertEqual("polled", payload["status_text"])
         self.assertEqual(1, mp_model)
 
+    def test_polling_service_collect_connection_status_uses_connect_only(self):
+        config = DeviceConfig(ip_address="10.0.0.1", name="Fake")
+
+        payload, mp_model = asyncio.run(
+            PollingService.collect_connection_status("fake_registry", config, device_id="dev-1")
+        )
+
+        self.assertTrue(payload["is_online"])
+        self.assertEqual("connected", payload["status_text"])
+        self.assertEqual(1, mp_model)
+
     def test_command_service_execute_command_uses_registry(self):
         config = DeviceConfig(ip_address="10.0.0.1", name="Fake")
 

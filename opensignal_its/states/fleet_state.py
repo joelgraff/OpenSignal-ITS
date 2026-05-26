@@ -62,6 +62,7 @@ class FleetStateMixin(rx.State, mixin=True):
     fleet_map_data: list[dict[str, Any]] = []
     fleet_map_layout: dict[str, Any] = {}
     fleet_map_figure: dict[str, Any] = {}
+    fleet_map_src_doc: str = FleetService.build_map_src_doc([], "")
     fleet_map_notice: str = "Add controller coordinates to place signals on the map."
     fleet_online_count: int = 0
     fleet_offline_count: int = 0
@@ -167,6 +168,10 @@ class FleetStateMixin(rx.State, mixin=True):
             "data": list(self.fleet_map_data),
             "layout": dict(self.fleet_map_layout),
         }
+        self.fleet_map_src_doc = FleetService.build_map_src_doc(
+            markers,
+            self.selected_device_id,
+        )
 
         if not profiles:
             self.fleet_map_notice = "No controller profiles are configured yet."
@@ -232,6 +237,7 @@ class FleetStateMixin(rx.State, mixin=True):
             self.fleet_map_data = []
             self.fleet_map_layout = {}
             self.fleet_map_figure = {}
+            self.fleet_map_src_doc = FleetService.build_map_src_doc([], self.selected_device_id)
             self.fleet_map_notice = "Fix controller profile JSON to render the signal map."
             self.fleet_device_rows = []
             self.error = self.fleet_status_summary

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from ipaddress import ip_address
 import json
+from string import Template
 from typing import Any, Awaitable, Callable
 
 from ..models.device import DeviceConfig
@@ -18,6 +19,7 @@ from ..models.fleet import (
 
 class FleetService:
     DEFAULT_DEVICE_TYPE = "siemens_m60"
+    MAP_SELECTION_STORAGE_KEY = "opensignal-map-selection"
 
     @staticmethod
     def _primary_profile_label(profile: dict[str, Any]) -> str:
@@ -444,7 +446,7 @@ class FleetService:
                 "marker": {
                     "size": [marker["marker_size"] for marker in markers],
                     "color": [marker["marker_color"] for marker in markers],
-                    "opacity": [1.0 if marker["is_selected"] else 0.85 for marker in markers],
+                    "opacity": 0.95,
                 },
                 "hovertemplate": (
                     "<b>%{text}</b><br>%{customdata[0]}"
@@ -455,29 +457,187 @@ class FleetService:
 
     @staticmethod
     def build_map_layout(markers: list[dict[str, Any]]) -> dict[str, Any]:
-        if markers:
-            center_lat = sum(float(marker["latitude"]) for marker in markers) / len(markers)
-            center_lon = sum(float(marker["longitude"]) for marker in markers) / len(markers)
-            zoom = 13.5 if len(markers) == 1 else 10.5 if len(markers) <= 4 else 8.75
-        else:
-            center_lat = 39.8283
-            center_lon = -98.5795
-            zoom = 3.5
+        center_lat, center_lon, zoom = FleetService._map_view(markers)
 
         return {
             "mapbox": {
                 "style": "open-street-map",
-                "center": {"lat": center_lat, "lon": center_lon},
+                "center": {
+                    "lat": center_lat,
+                    "lon": center_lon,
+                },
                 "zoom": zoom,
             },
-            "margin": {"l": 0, "r": 0, "t": 0, "b": 0},
+            "margin": {"l": 48, "r": 20, "t": 16, "b": 48},
             "paper_bgcolor": "rgba(0,0,0,0)",
-            "plot_bgcolor": "rgba(0,0,0,0)",
+            "plot_bgcolor": "rgba(255,255,255,0.72)",
             "showlegend": False,
             "hovermode": "closest",
             "clickmode": "event+select",
             "uirevision": "opensignal-controller-map",
         }
+
+    @staticmethod
+    def _map_view(markers: list[dict[str, Any]]) -> tuple[float, float, float]:
+        if not markers:
+            return 39.8283, -98.5795, 4.0
+
+        latitudes = [float(marker["latitude"]) for marker in markers]
+        longitudes = [float(marker["longitude"]) for marker in markers]
+        center_lat = sum(latitudes) / len(latitudes)
+        center_lon = sum(longitudes) / len(longitudes)
+        if len(markers) == 1:
+            zoom = 13.0
+        elif len(markers) <= 4:
+            zoom = 10.0
+        else:
+            zoom = 8.0
+        return center_lat, center_lon, zoom
+
+    @staticmethod
+    def build_map_src_doc(
+        markers: list[dict[str, Any]],
+        selected_device_id: str = "",
+    ) -> str:
+        center_lat, center_lon, zoom = FleetService._map_view(markers)
+        meta = {
+            "storageKey": FleetService.MAP_SELECTION_STORAGE_KEY,
+            "selectedDeviceId": str(selected_device_id).strip(),
+            "defaultLat": center_lat,
+            "defaultLon": center_lon,
+            "defaultZoom": zoom,
+        }
+        markers_json = json.dumps(markers, ensure_ascii=False).replace("<", "\\u003c")
+        meta_json = json.dumps(meta, ensure_ascii=False).replace("<", "\\u003c")
+
+        return Template(
+            """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        html, body {
+            margin: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #eef2ff;
+            font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+        }
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+        .leaflet-container {
+            background: #eef2ff;
+        }
+        .map-popup {
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        .map-popup strong {
+            display: block;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <script id="map-meta" type="application/json">$meta_json</script>
+    <script id="map-data" type="application/json">$markers_json</script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        (function () {
+            const escapeHtml = (value) => String(value).replace(/[&<>\"']/g, (character) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '\"': '&quot;',
+                "'": '&#39;',
+            }[character]));
+
+            const mapMeta = JSON.parse(document.getElementById('map-meta').textContent || '{}');
+            const markers = JSON.parse(document.getElementById('map-data').textContent || '[]');
+            const storageKey = mapMeta.storageKey || 'opensignal-map-selection';
+            const selectedDeviceId = mapMeta.selectedDeviceId || '';
+            const defaultLat = Number.isFinite(mapMeta.defaultLat) ? mapMeta.defaultLat : 39.8283;
+            const defaultLon = Number.isFinite(mapMeta.defaultLon) ? mapMeta.defaultLon : -98.5795;
+            const defaultZoom = Number.isFinite(mapMeta.defaultZoom) ? mapMeta.defaultZoom : 4;
+
+            const map = L.map('map', {
+                zoomControl: true,
+                scrollWheelZoom: true,
+            });
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap contributors',
+            }).addTo(map);
+
+            const bounds = [];
+
+            markers.forEach((marker) => {
+                const isSelected = marker.device_id === selectedDeviceId;
+                const color = isSelected ? '#4f46e5' : (marker.marker_color || '#2563eb');
+                const radius = isSelected ? 10 : (marker.marker_size || 8);
+                const circle = L.circleMarker([marker.latitude, marker.longitude], {
+                    radius,
+                    color,
+                    fillColor: color,
+                    fillOpacity: 0.9,
+                    weight: isSelected ? 3 : 2,
+                }).addTo(map);
+
+                circle.bindTooltip(escapeHtml(marker.label), { direction: 'top', opacity: 0.95 });
+                circle.bindPopup(
+                    '<div class="map-popup">' +
+                    '<strong>' + escapeHtml(marker.label) + '</strong>' +
+                    '<div>' + escapeHtml(marker.device_id) + '</div>' +
+                    '<div>' + escapeHtml(marker.status_text) + '</div>' +
+                    '<div>' + escapeHtml(marker.updated_text) + '</div>' +
+                    '</div>'
+                );
+                circle.on('click', () => {
+                    const payload = marker.device_id + '::' + Date.now();
+                    try {
+                        const previousValue = window.parent.localStorage.getItem(storageKey);
+                        window.parent.localStorage.setItem(storageKey, payload);
+                        window.parent.dispatchEvent(new StorageEvent('storage', {
+                            key: storageKey,
+                            oldValue: previousValue,
+                            newValue: payload,
+                            url: window.location.href,
+                            storageArea: window.parent.localStorage,
+                        }));
+                    } catch (error) {
+                        try {
+                            localStorage.setItem(storageKey, payload);
+                        } catch (ignored) {
+                            // The parent storage bridge is best-effort.
+                        }
+                    }
+                });
+                bounds.push([marker.latitude, marker.longitude]);
+            });
+
+            if (bounds.length === 1) {
+                map.setView(bounds[0], 13);
+            } else if (bounds.length > 1) {
+                map.fitBounds(bounds, { padding: [32, 32] });
+            } else {
+                map.setView([defaultLat, defaultLon], defaultZoom);
+            }
+
+            requestAnimationFrame(() => map.invalidateSize());
+        }());
+    </script>
+</body>
+</html>
+"""
+        ).substitute(meta_json=meta_json, markers_json=markers_json)
 
     @staticmethod
     def sort_profiles(

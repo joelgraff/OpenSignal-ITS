@@ -7,9 +7,14 @@ import reflex as rx
 
 class AuthStateDefaultTests(unittest.TestCase):
     def setUp(self):
+        self._saved_env = os.environ.get("OPENSIGNAL_ENV")
         self._saved_disable_login = os.environ.get("OPENSIGNAL_DISABLE_LOGIN")
 
     def tearDown(self):
+        if self._saved_env is None:
+            os.environ.pop("OPENSIGNAL_ENV", None)
+        else:
+            os.environ["OPENSIGNAL_ENV"] = self._saved_env
         if self._saved_disable_login is None:
             os.environ.pop("OPENSIGNAL_DISABLE_LOGIN", None)
         else:
@@ -29,7 +34,19 @@ class AuthStateDefaultTests(unittest.TestCase):
 
         return _AuthProbe(_reflex_internal_init=True)
 
-    def test_login_required_by_default(self):
+    def test_login_disabled_by_default_in_dev(self):
+        os.environ.pop("OPENSIGNAL_ENV", None)
+        os.environ.pop("OPENSIGNAL_DISABLE_LOGIN", None)
+
+        probe = self._load_probe()
+
+        self.assertTrue(probe.is_authenticated)
+        self.assertEqual("local-access", probe.current_operator)
+        self.assertEqual("admin", probe.current_role)
+        self.assertEqual("Login disabled for local development.", probe.auth_notice)
+
+    def test_login_required_in_production_like_env_without_bypass(self):
+        os.environ["OPENSIGNAL_ENV"] = "production"
         os.environ.pop("OPENSIGNAL_DISABLE_LOGIN", None)
 
         probe = self._load_probe()

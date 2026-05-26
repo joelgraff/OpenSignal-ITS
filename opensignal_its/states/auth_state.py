@@ -9,12 +9,19 @@ import reflex as rx
 from ..services import OperatorAuthService
 
 
-_LOGIN_DISABLED = os.getenv("OPENSIGNAL_DISABLE_LOGIN", "0").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+def _login_disabled_default() -> bool:
+    env = os.getenv("OPENSIGNAL_ENV", "dev").strip().lower()
+    return env not in {"prod", "production", "staging", "pilot"}
+
+
+def _is_login_disabled() -> bool:
+    raw_value = os.getenv("OPENSIGNAL_DISABLE_LOGIN")
+    if raw_value is not None:
+        return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+    return _login_disabled_default()
+
+
+_LOGIN_DISABLED = _is_login_disabled()
 _LOGIN_BYPASS_OPERATOR = os.getenv("OPENSIGNAL_BYPASS_OPERATOR", "local-access").strip() or "local-access"
 
 

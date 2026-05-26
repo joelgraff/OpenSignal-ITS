@@ -9,6 +9,17 @@ class PollingService:
     """Collect status snapshots from devices."""
 
     @staticmethod
+    async def collect_connection_status(
+        device_type: str,
+        config: DeviceConfig,
+        device_id: str = "",
+    ) -> tuple[dict, int]:
+        _runtime_key, device = RUNTIME.get_or_create(device_type, config, device_id=device_id)
+        await device.connect()
+        mp_model = getattr(device, "_mp_model", 1)
+        return device.status.model_dump(mode="json"), mp_model
+
+    @staticmethod
     async def collect_snapshot(
         device_type: str,
         config: DeviceConfig,

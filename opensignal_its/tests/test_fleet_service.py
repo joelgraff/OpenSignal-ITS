@@ -362,6 +362,95 @@ class FleetServiceTests(unittest.TestCase):
         self.assertEqual("Online", markers[0]["status_label"])
         self.assertTrue(bool(markers[0]["is_selected"]))
 
+    def test_build_map_data_uses_mapbox_trace(self):
+        markers = [
+            {
+                "device_id": "int-1",
+                "label": "Main & 1st",
+                "subtitle": "int-1 | 10.0.0.1",
+                "status_label": "Online",
+                "status_text": "Pattern 2 | Unit Free",
+                "updated_text": "Updated 2026-05-24 12:00:00+00:00",
+                "latitude": 40.7128,
+                "longitude": -74.0060,
+                "is_selected": True,
+                "marker_color": "#4338ca",
+                "marker_size": 18,
+            }
+        ]
+
+        data = FleetService.build_map_data(markers)
+
+        self.assertEqual(1, len(data))
+        self.assertEqual("scattermapbox", data[0]["type"])
+        self.assertEqual([-74.006], data[0]["lon"])
+        self.assertEqual([40.7128], data[0]["lat"])
+        self.assertEqual(0.95, data[0]["marker"]["opacity"])
+        self.assertEqual(["#4338ca"], data[0]["marker"]["color"])
+
+    def test_build_map_layout_uses_open_street_map_center(self):
+        markers = [
+            {
+                "device_id": "int-1",
+                "label": "Main & 1st",
+                "subtitle": "int-1 | 10.0.0.1",
+                "status_label": "Online",
+                "status_text": "Pattern 2 | Unit Free",
+                "updated_text": "Updated 2026-05-24 12:00:00+00:00",
+                "latitude": 40.7128,
+                "longitude": -74.0060,
+                "is_selected": True,
+                "marker_color": "#4338ca",
+                "marker_size": 18,
+            },
+            {
+                "device_id": "int-2",
+                "label": "Broadway",
+                "subtitle": "int-2 | 10.0.0.2",
+                "status_label": "Offline",
+                "status_text": "No status detail.",
+                "updated_text": "Awaiting refresh",
+                "latitude": 40.7139,
+                "longitude": -74.0020,
+                "is_selected": False,
+                "marker_color": "#dc2626",
+                "marker_size": 12,
+            },
+        ]
+
+        layout = FleetService.build_map_layout(markers)
+
+        self.assertEqual("open-street-map", layout["mapbox"]["style"])
+        self.assertAlmostEqual(40.71335, layout["mapbox"]["center"]["lat"], places=6)
+        self.assertAlmostEqual(-74.004, layout["mapbox"]["center"]["lon"], places=6)
+        self.assertEqual(10.0, layout["mapbox"]["zoom"])
+        self.assertEqual("opensignal-controller-map", layout["uirevision"])
+
+    def test_build_map_src_doc_embeds_leaflet_and_storage_bridge(self):
+        markers = [
+            {
+                "device_id": "int-1",
+                "label": "Main & 1st",
+                "subtitle": "int-1 | 10.0.0.1",
+                "status_label": "Online",
+                "status_text": "Pattern 2 | Unit Free",
+                "updated_text": "Updated 2026-05-24 12:00:00+00:00",
+                "latitude": 40.7128,
+                "longitude": -74.0060,
+                "is_selected": True,
+                "marker_color": "#4338ca",
+                "marker_size": 18,
+            }
+        ]
+
+        src_doc = FleetService.build_map_src_doc(markers, selected_device_id="int-1")
+
+        self.assertIn("leaflet", src_doc.lower())
+        self.assertIn("openstreetmap", src_doc.lower())
+        self.assertIn(FleetService.MAP_SELECTION_STORAGE_KEY, src_doc)
+        self.assertIn("dispatchEvent(new StorageEvent('storage'", src_doc)
+        self.assertIn("int-1", src_doc)
+
     def test_list_unmapped_profiles_returns_missing_coordinate_ids(self):
         profiles = [
             {

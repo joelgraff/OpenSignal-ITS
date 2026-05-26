@@ -344,6 +344,60 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual(4.5, config.timeout_seconds)
         self.assertEqual(2, config.retries)
 
+    def test_monitor_state_connect_uses_connection_status_path(self):
+        class _MonitorProbe(MonitorStateMixin, TimeStateMixin, rx.State):
+            auto_refresh_enabled: bool = False
+            auto_reconnect_enabled: bool = False
+            last_updated: str = ""
+            is_loading: bool = False
+            error: str = ""
+            cached_status: tuple[str, str, dict] | None = None
+
+            def _selected_device_target(self):
+                return (
+                    "siemens_m60",
+                    "int-1",
+                    type("_Config", (), {
+                        "ip_address": "10.0.0.1",
+                        "port": 161,
+                        "community": "public",
+                        "snmp_version": "v1",
+                        "timeout_seconds": 3.0,
+                        "retries": 1,
+                        "name": "Fake",
+                    })(),
+                )
+
+            def _cache_device_status(self, device_id: str, device_type: str, payload: dict):
+                self.cached_status = (device_id, device_type, payload)
+
+        probe = _MonitorProbe(_reflex_internal_init=True)
+        payload = {
+            "is_online": True,
+            "status_text": "Connected via SNMP v1",
+            "timestamp": "2026-05-26T00:00:00+00:00",
+            "raw_data": {},
+            "extra": {},
+            "errors": [],
+        }
+
+        async def _fake_collect_connection_status(device_type, config, device_id=""):
+            return payload, 0
+
+        with patch(
+            "opensignal_its.states.monitor_state.PollingService.collect_connection_status",
+            side_effect=_fake_collect_connection_status,
+        ) as collect_connection_status, patch(
+            "opensignal_its.states.monitor_state.PollingService.collect_snapshot"
+        ) as collect_snapshot:
+            asyncio.run(probe.connect_m60())
+
+        collect_connection_status.assert_called_once()
+        collect_snapshot.assert_not_called()
+        self.assertTrue(probe.is_online)
+        self.assertEqual("Connected via SNMP v1", probe.status_text)
+        self.assertEqual(("int-1", "siemens_m60", payload), probe.cached_status)
+
     def test_command_state_select_pattern_wrapper_delegates_to_send_command(self):
         class _CommandProbe(CommandStateMixin, rx.State):
             calls: list[tuple[object, object, object]] = []
@@ -617,6 +671,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "back_to_dashboard",
             "select_controller_from_row",
             "select_controller_from_map_points",
+            "sync_map_selection_from_storage",
             "_build_config",
             "_selected_device_target",
             "_apply_phase_payload",
@@ -662,6 +717,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "fleet_map_data",
             "fleet_map_layout",
             "fleet_map_figure",
+            "fleet_map_src_doc",
             "fleet_map_notice",
             "fleet_online_count",
             "fleet_offline_count",

@@ -13,8 +13,6 @@ view. The intersection view has a breadcrumb to return to the dashboard.
 """
 
 import reflex as rx
-from plotly.graph_objs import Figure
-from reflex_components_plotly import plotly as plotly_component
 
 from ...components.phase_status import phase_status_grid
 from ...states import TrafficState
@@ -121,77 +119,30 @@ def _dashboard_map_panel() -> rx.Component:
                 width="100%",
                 align="center",
             ),
-            rx.cond(
-                TrafficState.fleet_map_data != [],
-                plotly_component.mapbox(
-                    data=TrafficState.fleet_map_figure.to(Figure),
-                    config={
-                        "displayModeBar": False,
-                        "responsive": True,
-                        "scrollZoom": True,
-                    },
-                    on_click=TrafficState.select_controller_from_map_points,
-                    use_resize_handler=True,
+            rx.text(
+                TrafficState.fleet_map_notice,
+                size="1",
+                color="gray",
+            ),
+            rx.box(
+                rx.el.iframe(
+                    src_doc=TrafficState.fleet_map_src_doc,
                     width="100%",
                     height="360px",
+                    border="0",
+                    loading="eager",
                 ),
-                rx.cond(
-                    TrafficState.fleet_unmapped_profile_rows != [],
-                    rx.center(
-                        rx.vstack(
-                            rx.heading("Add coordinates to place controllers on the map.", size="4"),
-                            rx.text(
-                                TrafficState.fleet_map_notice,
-                                size="1",
-                                color="gray",
-                                text_align="center",
-                            ),
-                            rx.box(
-                                rx.foreach(
-                                    TrafficState.fleet_unmapped_profile_rows,
-                                    _unmapped_profile_button,
-                                ),
-                                display="flex",
-                                flex_wrap="wrap",
-                                gap="6px",
-                                justify_content="center",
-                                width="100%",
-                            ),
-                            spacing="2",
-                            align="center",
-                            width="100%",
-                        ),
-                        min_height="360px",
-                        width="100%",
-                        border_radius="12px",
-                        border="1px dashed #93c5fd",
-                        background="rgba(255, 255, 255, 0.72)",
-                        padding="4",
-                    ),
-                    rx.center(
-                        rx.text(
-                            TrafficState.fleet_map_notice,
-                            size="1",
-                            color="gray",
-                            text_align="center",
-                        ),
-                        min_height="360px",
-                        width="100%",
-                        border_radius="12px",
-                        border="1px dashed #93c5fd",
-                        background="rgba(255, 255, 255, 0.72)",
-                        padding="4",
-                    ),
-                ),
+                width="100%",
+                height="360px",
+                overflow="hidden",
+                border_radius="12px",
+                border="1px solid #bfdbfe",
+                background="rgba(255, 255, 255, 0.72)",
             ),
             rx.cond(
-                TrafficState.fleet_unmapped_profile_rows != [],
+                TrafficState.fleet_unmapped_device_ids != [],
                 rx.vstack(
-                    rx.text(
-                        "Awaiting coordinates. Open a controller below to record them.",
-                        size="1",
-                        color="gray",
-                    ),
+                    rx.heading("Add coordinates to place controllers on the map.", size="4"),
                     rx.box(
                         rx.foreach(
                             TrafficState.fleet_unmapped_profile_rows,
@@ -200,12 +151,14 @@ def _dashboard_map_panel() -> rx.Component:
                         display="flex",
                         flex_wrap="wrap",
                         gap="6px",
+                        justify_content="center",
                         width="100%",
                     ),
+                    spacing="2",
+                    align="center",
                     width="100%",
-                    spacing="1",
                 ),
-                rx.fragment(),
+                rx.box(),
             ),
             spacing="2",
             width="100%",
@@ -728,9 +681,15 @@ def monitor_workspace_page() -> rx.Component:
             "Select a controller to investigate live status and alarms.",
             "Return to overview at any time while keeping the current controller target.",
         ),
-        body=rx.cond(
-            TrafficState.monitor_view == "dashboard",
-            _dashboard_view(),
-            _intersection_view(),
+        body=rx.vstack(
+            rx.window_event_listener(
+                on_storage=TrafficState.sync_map_selection_from_storage,
+            ),
+            rx.cond(
+                TrafficState.monitor_view == "dashboard",
+                _dashboard_view(),
+                _intersection_view(),
+            ),
+            spacing="0",
         ),
     )
