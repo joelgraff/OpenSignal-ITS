@@ -31,6 +31,7 @@ class ConfigurationStateMixin(rx.State, mixin=True):
     controller_profile_form_retries_text: str = "1"
     controller_profile_form_latitude_text: str = ""
     controller_profile_form_longitude_text: str = ""
+    controller_profile_creation_dialog_open: bool = False
 
     def update_device_profiles_json(self, value: str):
         self.device_profiles_json = value
@@ -102,6 +103,9 @@ class ConfigurationStateMixin(rx.State, mixin=True):
     def update_controller_profile_form_longitude_text(self, value: str):
         self.controller_profile_form_longitude_text = value
 
+    def set_controller_profile_creation_dialog_open(self, value: bool):
+        self.controller_profile_creation_dialog_open = bool(value)
+
     def _reset_controller_profile_form(self):
         self.controller_profile_form_error = ""
         self.controller_profile_original_device_id = ""
@@ -117,6 +121,16 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         self.controller_profile_form_retries_text = "1"
         self.controller_profile_form_latitude_text = ""
         self.controller_profile_form_longitude_text = ""
+
+    def open_controller_profile_creation_from_map_point(self, latitude: float, longitude: float):
+        self._reset_controller_profile_form()
+        self.controller_profile_form_latitude_text = f"{float(latitude):.6f}".rstrip("0").rstrip(".")
+        self.controller_profile_form_longitude_text = f"{float(longitude):.6f}".rstrip("0").rstrip(".")
+        self.controller_profile_creation_dialog_open = True
+        self.controller_profile_notice = "Create a controller at the selected map point."
+
+    def close_controller_profile_creation_dialog(self):
+        self.controller_profile_creation_dialog_open = False
 
     def _sync_controller_profile_rows(self, notice: str = "") -> list[dict[str, Any]]:
         try:
@@ -159,6 +173,7 @@ class ConfigurationStateMixin(rx.State, mixin=True):
 
     def new_controller_profile(self):
         self._reset_controller_profile_form()
+        self.controller_profile_creation_dialog_open = False
         self._sync_controller_profile_rows("Ready to add a controller profile.")
 
     def load_controller_profile(self, device_id: str):
@@ -202,6 +217,7 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         self.selected_device_id = self.controller_profile_form_device_id
         self.controller_profile_notice = f"Loaded controller profile {target}."
         self.controller_profile_form_error = ""
+        self.controller_profile_creation_dialog_open = False
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):
             refresh_map()
@@ -270,6 +286,7 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         if target_device_id:
             self.selected_device_id = target_device_id
         self.controller_profile_form_error = ""
+        self.controller_profile_creation_dialog_open = False
         self._sync_controller_profile_rows(f"Saved controller profile {target_device_id}.")
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):
@@ -296,6 +313,7 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         if self.selected_device_id.strip() == target:
             self.selected_device_id = ""
         self._reset_controller_profile_form()
+        self.controller_profile_creation_dialog_open = False
         self._sync_controller_profile_rows(f"Removed controller profile {target}.")
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):
@@ -310,6 +328,7 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         self.selected_device_id = target
         self.ui_workspace_mode = "monitor"
         self.monitor_view = "intersection"
+        self.controller_profile_creation_dialog_open = False
         self.controller_profile_notice = f"Opened Overview for {target}."
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):

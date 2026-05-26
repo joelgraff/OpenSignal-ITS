@@ -96,6 +96,9 @@ class MonitorStateMixin(rx.State, mixin=True):
         if tokenized:
             self.selected_device_id = tokenized[0]
             self.monitor_view = "intersection"
+            close_dialog = getattr(self, "close_controller_profile_creation_dialog", None)
+            if callable(close_dialog):
+                close_dialog()
             refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
             if callable(refresh_map):
                 refresh_map()
@@ -120,6 +123,9 @@ class MonitorStateMixin(rx.State, mixin=True):
 
         self.selected_device_id = device_id
         self.monitor_view = "intersection"
+        close_dialog = getattr(self, "close_controller_profile_creation_dialog", None)
+        if callable(close_dialog):
+            close_dialog()
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):
             refresh_map()
@@ -131,22 +137,54 @@ class MonitorStateMixin(rx.State, mixin=True):
         new_value: str,
         url: str,
     ):
-        if key != FleetService.MAP_SELECTION_STORAGE_KEY:
+        if key == FleetService.MAP_SELECTION_STORAGE_KEY:
+            raw_value = str(new_value).strip()
+            if not raw_value:
+                return
+
+            selected_device_id = raw_value.split("::", 1)[0].strip()
+            if not selected_device_id:
+                return
+
+            self.selected_device_id = selected_device_id
+            self.monitor_view = "intersection"
+            close_dialog = getattr(self, "close_controller_profile_creation_dialog", None)
+            if callable(close_dialog):
+                close_dialog()
+            refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
+            if callable(refresh_map):
+                refresh_map()
+            return
+
+        if key != FleetService.MAP_CREATE_STORAGE_KEY:
             return
 
         raw_value = str(new_value).strip()
         if not raw_value:
             return
 
-        selected_device_id = raw_value.split("::", 1)[0].strip()
-        if not selected_device_id:
+        try:
+            payload = json.loads(raw_value)
+        except json.JSONDecodeError:
             return
 
-        self.selected_device_id = selected_device_id
-        self.monitor_view = "intersection"
-        refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
-        if callable(refresh_map):
-            refresh_map()
+        if not isinstance(payload, dict):
+            return
+
+        latitude = payload.get("latitude")
+        longitude = payload.get("longitude")
+        if latitude is None or longitude is None:
+            return
+
+        try:
+            latitude_value = float(latitude)
+            longitude_value = float(longitude)
+        except (TypeError, ValueError):
+            return
+
+        open_dialog = getattr(self, "open_controller_profile_creation_from_map_point", None)
+        if callable(open_dialog):
+            open_dialog(latitude_value, longitude_value)
 
     def _build_config(self) -> DeviceConfig:
         port = int(self.port_text)

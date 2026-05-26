@@ -303,7 +303,6 @@ class FleetStateMixin(rx.State, mixin=True):
 
                 if is_loading:
                     await asyncio.sleep(1.0)
-                    await asyncio.sleep(refresh_interval)
                     continue
 
                 if (not is_online) and reconnect_enabled:
@@ -330,6 +329,11 @@ class FleetStateMixin(rx.State, mixin=True):
                             self._apply_status_snapshot(status_payload, mp_model)
                             self._cache_device_status(device_id, device_type, status_payload)
                     await asyncio.sleep(reconnect_interval)
+                    continue
+
+                if is_online and refresh_enabled:
+                    await self.refresh_status()
+                    await asyncio.sleep(refresh_interval)
                     continue
 
                 await asyncio.sleep(1.0)

@@ -448,6 +448,8 @@ class FleetServiceTests(unittest.TestCase):
         self.assertIn("leaflet", src_doc.lower())
         self.assertIn("openstreetmap", src_doc.lower())
         self.assertIn(FleetService.MAP_SELECTION_STORAGE_KEY, src_doc)
+        self.assertIn(FleetService.MAP_CREATE_STORAGE_KEY, src_doc)
+        self.assertIn("map.on('click'", src_doc)
         self.assertIn("dispatchEvent(new StorageEvent('storage'", src_doc)
         self.assertIn("int-1", src_doc)
 

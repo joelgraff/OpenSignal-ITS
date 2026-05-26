@@ -20,6 +20,7 @@ from ..models.fleet import (
 class FleetService:
     DEFAULT_DEVICE_TYPE = "siemens_m60"
     MAP_SELECTION_STORAGE_KEY = "opensignal-map-selection"
+    MAP_CREATE_STORAGE_KEY = "opensignal-map-create-controller"
 
     @staticmethod
     def _primary_profile_label(profile: dict[str, Any]) -> str:
@@ -502,6 +503,7 @@ class FleetService:
         center_lat, center_lon, zoom = FleetService._map_view(markers)
         meta = {
             "storageKey": FleetService.MAP_SELECTION_STORAGE_KEY,
+            "creationStorageKey": FleetService.MAP_CREATE_STORAGE_KEY,
             "selectedDeviceId": str(selected_device_id).strip(),
             "defaultLat": center_lat,
             "defaultLon": center_lon,
@@ -562,10 +564,31 @@ class FleetService:
             const mapMeta = JSON.parse(document.getElementById('map-meta').textContent || '{}');
             const markers = JSON.parse(document.getElementById('map-data').textContent || '[]');
             const storageKey = mapMeta.storageKey || 'opensignal-map-selection';
+            const creationStorageKey = mapMeta.creationStorageKey || 'opensignal-map-create-controller';
             const selectedDeviceId = mapMeta.selectedDeviceId || '';
             const defaultLat = Number.isFinite(mapMeta.defaultLat) ? mapMeta.defaultLat : 39.8283;
             const defaultLon = Number.isFinite(mapMeta.defaultLon) ? mapMeta.defaultLon : -98.5795;
             const defaultZoom = Number.isFinite(mapMeta.defaultZoom) ? mapMeta.defaultZoom : 4;
+
+            const writeStorageEvent = (key, value) => {
+                try {
+                    const previousValue = window.parent.localStorage.getItem(key);
+                    window.parent.localStorage.setItem(key, value);
+                    window.parent.dispatchEvent(new StorageEvent('storage', {
+                        key,
+                        oldValue: previousValue,
+                        newValue: value,
+                        url: window.location.href,
+                        storageArea: window.parent.localStorage,
+                    }));
+                } catch (error) {
+                    try {
+                        localStorage.setItem(key, value);
+                    } catch (ignored) {
+                        // The parent storage bridge is best-effort.
+                    }
+                }
+            };
 
             const map = L.map('map', {
                 zoomControl: true,
@@ -589,6 +612,7 @@ class FleetService:
                     fillColor: color,
                     fillOpacity: 0.9,
                     weight: isSelected ? 3 : 2,
+                    bubblingMouseEvents: false,
                 }).addTo(map);
 
                 circle.bindTooltip(escapeHtml(marker.label), { direction: 'top', opacity: 0.95 });
@@ -602,25 +626,19 @@ class FleetService:
                 );
                 circle.on('click', () => {
                     const payload = marker.device_id + '::' + Date.now();
-                    try {
-                        const previousValue = window.parent.localStorage.getItem(storageKey);
-                        window.parent.localStorage.setItem(storageKey, payload);
-                        window.parent.dispatchEvent(new StorageEvent('storage', {
-                            key: storageKey,
-                            oldValue: previousValue,
-                            newValue: payload,
-                            url: window.location.href,
-                            storageArea: window.parent.localStorage,
-                        }));
-                    } catch (error) {
-                        try {
-                            localStorage.setItem(storageKey, payload);
-                        } catch (ignored) {
-                            // The parent storage bridge is best-effort.
-                        }
-                    }
+                    writeStorageEvent(storageKey, payload);
                 });
                 bounds.push([marker.latitude, marker.longitude]);
+            });
+
+            map.on('click', (event) => {
+                const payload = JSON.stringify({
+                    latitude: event.latlng.lat,
+                    longitude: event.latlng.lng,
+                    source: 'map-click',
+                    timestamp: Date.now(),
+                });
+                writeStorageEvent(creationStorageKey, payload);
             });
 
             if (bounds.length === 1) {

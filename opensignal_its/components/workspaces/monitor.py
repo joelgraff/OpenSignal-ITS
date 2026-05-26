@@ -124,6 +124,11 @@ def _dashboard_map_panel() -> rx.Component:
                 size="1",
                 color="gray",
             ),
+            rx.text(
+                "Click an empty point on the map to add a controller. Click a marker to open intersection detail.",
+                size="1",
+                color="gray",
+            ),
             rx.box(
                 rx.el.iframe(
                     src_doc=TrafficState.fleet_map_src_doc,
@@ -169,6 +174,122 @@ def _dashboard_map_panel() -> rx.Component:
         border="1px solid #cbd5e1",
         padding="3",
         background="linear-gradient(160deg, #e0f2fe 0%, #f8fafc 48%, #eef2ff 100%)",
+    )
+
+
+def _map_controller_creation_dialog() -> rx.Component:
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.vstack(
+                rx.hstack(
+                    rx.vstack(
+                        rx.dialog.title("Create Controller"),
+                        rx.dialog.description(
+                            "Enter the controller record for the selected map point. Core SNMP settings use the current defaults."
+                        ),
+                        spacing="1",
+                        align="start",
+                    ),
+                    rx.spacer(),
+                    rx.button(
+                        "Close",
+                        on_click=TrafficState.close_controller_profile_creation_dialog,
+                        size="1",
+                        variant="ghost",
+                    ),
+                    align="center",
+                    width="100%",
+                ),
+                rx.text(
+                    rx.cond(
+                        TrafficState.controller_profile_form_latitude_text != "",
+                        rx.cond(
+                            TrafficState.controller_profile_form_longitude_text != "",
+                            f"Selected point: {TrafficState.controller_profile_form_latitude_text}, {TrafficState.controller_profile_form_longitude_text}",
+                            "Selected point: coordinates pending",
+                        ),
+                        "Selected point: coordinates pending",
+                    ),
+                    size="1",
+                    color="gray",
+                ),
+                rx.grid(
+                    rx.input(
+                        value=TrafficState.controller_profile_form_device_id,
+                        on_change=TrafficState.update_controller_profile_form_device_id,
+                        placeholder="Controller ID",
+                        size="1",
+                    ),
+                    rx.input(
+                        value=TrafficState.controller_profile_form_name,
+                        on_change=TrafficState.update_controller_profile_form_name,
+                        placeholder="Display name",
+                        size="1",
+                    ),
+                    rx.input(
+                        value=TrafficState.controller_profile_form_location_name,
+                        on_change=TrafficState.update_controller_profile_form_location_name,
+                        placeholder="Location label / intersection",
+                        size="1",
+                    ),
+                    rx.input(
+                        value=TrafficState.controller_profile_form_ip_address,
+                        on_change=TrafficState.update_controller_profile_form_ip_address,
+                        placeholder="IP address",
+                        size="1",
+                    ),
+                    rx.input(
+                        value=TrafficState.controller_profile_form_device_type,
+                        on_change=TrafficState.update_controller_profile_form_device_type,
+                        placeholder="Device type",
+                        size="1",
+                    ),
+                    rx.input(
+                        value=TrafficState.controller_profile_form_latitude_text,
+                        on_change=TrafficState.update_controller_profile_form_latitude_text,
+                        placeholder="Latitude",
+                        size="1",
+                    ),
+                    rx.input(
+                        value=TrafficState.controller_profile_form_longitude_text,
+                        on_change=TrafficState.update_controller_profile_form_longitude_text,
+                        placeholder="Longitude",
+                        size="1",
+                    ),
+                    template_columns="repeat(auto-fit, minmax(220px, 1fr))",
+                    spacing="2",
+                    width="100%",
+                ),
+                rx.text(
+                    "Quick create uses the default port, community, SNMP version, timeout, and retries. Use Controllers for advanced SNMP edits.",
+                    size="1",
+                    color="gray",
+                ),
+                rx.hstack(
+                    rx.button(
+                        "Create Controller",
+                        on_click=TrafficState.save_controller_profile,
+                        size="1",
+                        color_scheme="green",
+                    ),
+                    rx.button(
+                        "Cancel",
+                        on_click=TrafficState.close_controller_profile_creation_dialog,
+                        size="1",
+                        variant="outline",
+                    ),
+                    spacing="2",
+                    align="center",
+                    width="100%",
+                    justify_content="end",
+                ),
+                spacing="3",
+                width="100%",
+            ),
+            size="4",
+        ),
+        open=TrafficState.controller_profile_creation_dialog_open,
+        on_open_change=TrafficState.set_controller_profile_creation_dialog_open,
     )
 
 
@@ -313,6 +434,7 @@ def _dashboard_view() -> rx.Component:
             spacing="2",
             width="100%",
         ),
+        _map_controller_creation_dialog(),
         spacing="2",
         width="100%",
     )

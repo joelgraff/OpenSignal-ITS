@@ -398,6 +398,26 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual("Connected via SNMP v1", probe.status_text)
         self.assertEqual(("int-1", "siemens_m60", payload), probe.cached_status)
 
+    def test_monitor_state_opens_controller_creation_dialog_from_map_point(self):
+        class _MonitorCreateProbe(ConfigurationStateMixin, MonitorStateMixin, rx.State):
+            controller_profile_creation_dialog_open: bool = False
+            controller_profile_form_latitude_text: str = ""
+            controller_profile_form_longitude_text: str = ""
+
+        probe = _MonitorCreateProbe(_reflex_internal_init=True)
+
+        probe.sync_map_selection_from_storage(
+            "opensignal-map-create-controller",
+            "",
+            '{"latitude": 40.7128, "longitude": -74.0060, "source": "map-click"}',
+            "http://localhost:3000/",
+        )
+
+        self.assertTrue(probe.controller_profile_creation_dialog_open)
+        self.assertEqual("40.7128", probe.controller_profile_form_latitude_text)
+        self.assertEqual("-74.006", probe.controller_profile_form_longitude_text)
+        self.assertEqual("Create a controller at the selected map point.", probe.controller_profile_notice)
+
     def test_command_state_select_pattern_wrapper_delegates_to_send_command(self):
         class _CommandProbe(CommandStateMixin, rx.State):
             calls: list[tuple[object, object, object]] = []
@@ -607,6 +627,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "controller_profile_form_retries_text",
             "controller_profile_form_latitude_text",
             "controller_profile_form_longitude_text",
+            "controller_profile_creation_dialog_open",
             "update_device_profiles_json",
             "update_controller_profile_filter_text",
             "update_controller_profile_mapping_filter",
@@ -624,6 +645,9 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "update_controller_profile_form_retries_text",
             "update_controller_profile_form_latitude_text",
             "update_controller_profile_form_longitude_text",
+            "set_controller_profile_creation_dialog_open",
+            "open_controller_profile_creation_from_map_point",
+            "close_controller_profile_creation_dialog",
             "new_controller_profile",
             "load_controller_profile",
             "load_controller_profile_from_row",
