@@ -6,10 +6,12 @@ from typing import Any
 
 import reflex as rx
 
+from ..db import STORE
 from ..services import FleetService
 
 
 class ConfigurationStateMixin(rx.State, mixin=True):
+    CONTROLLER_PROFILE_SETTINGS_KEY: str = "controller_profiles_json"
     device_profiles_json: str = "[]"
     controller_profile_rows: list[dict[str, Any]] = []
     controller_profile_notice: str = "No controller profiles configured yet."
@@ -39,9 +41,36 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         self.device_profiles_json = value
         self.controller_profile_form_error = ""
         self._sync_controller_profile_rows()
+        self._persist_controller_profiles_json()
+        refresh_cards = getattr(self, "_refresh_fleet_card_fields", None)
+        if callable(refresh_cards):
+            refresh_cards()
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):
             refresh_map()
+
+    def _persist_controller_profiles_json(self):
+        try:
+            STORE.set_app_setting(self.CONTROLLER_PROFILE_SETTINGS_KEY, self.device_profiles_json)
+        except Exception:
+            pass
+
+    def initialize_controller_profiles(self):
+        try:
+            persisted = STORE.get_app_setting(self.CONTROLLER_PROFILE_SETTINGS_KEY, "").strip()
+        except Exception:
+            persisted = ""
+
+        if persisted:
+            self.device_profiles_json = persisted
+
+        profiles = self._sync_controller_profile_rows()
+        refresh_cards = getattr(self, "_refresh_fleet_card_fields", None)
+        if callable(refresh_cards):
+            refresh_cards(profiles)
+        refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
+        if callable(refresh_map):
+            refresh_map(profiles)
 
     def update_controller_profile_filter_text(self, value: str):
         self.controller_profile_filter_text = value
@@ -312,7 +341,11 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         self.controller_profile_map_point_latitude_text = ""
         self.controller_profile_map_point_longitude_text = ""
         self.controller_profile_creation_dialog_open = False
+        self._persist_controller_profiles_json()
         self._sync_controller_profile_rows(f"Saved controller profile {target_device_id}.")
+        refresh_cards = getattr(self, "_refresh_fleet_card_fields", None)
+        if callable(refresh_cards):
+            refresh_cards(updated_profiles)
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):
             refresh_map(updated_profiles)
@@ -340,7 +373,11 @@ class ConfigurationStateMixin(rx.State, mixin=True):
             self.selected_device_id = ""
         self._reset_controller_profile_form()
         self.controller_profile_creation_dialog_open = False
+        self._persist_controller_profiles_json()
         self._sync_controller_profile_rows(f"Removed controller profile {target}.")
+        refresh_cards = getattr(self, "_refresh_fleet_card_fields", None)
+        if callable(refresh_cards):
+            refresh_cards(updated_profiles)
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):
             refresh_map(updated_profiles)

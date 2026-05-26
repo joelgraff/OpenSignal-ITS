@@ -1,8 +1,11 @@
 import asyncio
 import unittest
+from tempfile import TemporaryDirectory
+from pathlib import Path
 
 from opensignal_its.devices.base import Device
 from opensignal_its.models.device import DeviceConfig, DeviceStatus
+from opensignal_its.db.audit_store import AuditStore
 from opensignal_its.services.command_service import CommandService
 from opensignal_its.services.polling_service import PollingService
 
@@ -169,6 +172,19 @@ class RegistryServicesTests(unittest.TestCase):
         self.assertEqual(2, started_status["running_count"])
         self.assertEqual(2, stopped_status["count"])
         self.assertEqual(0, stopped_status["running_count"])
+
+    def test_audit_store_app_setting_round_trip(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "traffic.db"
+            store = AuditStore(str(db_path))
+
+            store.set_app_setting("controller_profiles_json", "[{\"device_id\":\"int-1\"}]")
+
+            self.assertEqual(
+                "[{\"device_id\":\"int-1\"}]",
+                store.get_app_setting("controller_profiles_json"),
+            )
+            self.assertEqual("fallback", store.get_app_setting("missing_key", "fallback"))
 
 
 if __name__ == "__main__":

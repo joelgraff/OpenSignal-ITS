@@ -133,7 +133,12 @@ app.app_wraps[(5, "Overlay")] = (
     lambda stateful: _overlay_without_connection_pulser() if stateful else None
 )
 app.register_lifespan_task(_initialize_runtime)
-app.add_page(dashboard, route="/", title="OpenSignal ITS")
+app.add_page(
+    dashboard,
+    route="/",
+    title="OpenSignal ITS",
+    on_load=TrafficState.initialize_controller_profiles,
+)
 OPS_API_ENDPOINTS: dict[str, object] = {}
 
 

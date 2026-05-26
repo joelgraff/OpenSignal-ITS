@@ -262,6 +262,38 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual("Broadway", probe.controller_profile_form_name)
         self.assertIn("Opened Controllers for int-2.", probe.controller_profile_notice)
 
+    def test_configuration_state_initialize_controller_profiles_rehydrates_map_and_rows(self):
+        class _ConfigurationLoadProbe(ConfigurationStateMixin, FleetStateMixin, rx.State):
+            device_profiles_json: str = "[]"
+            controller_profile_sort_key: str = "device_id"
+            controller_profile_sort_desc: bool = False
+            selected_device_id: str = ""
+            fleet_status_by_id: dict[str, object] = {}
+
+        probe = _ConfigurationLoadProbe(_reflex_internal_init=True)
+
+        with patch(
+            "opensignal_its.states.configuration_state.STORE"
+        ) as store:
+            store.get_app_setting.return_value = """[
+                {
+                    "device_id": "int-9",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.9",
+                    "latitude": 40.7128,
+                    "longitude": -74.0060
+                }
+            ]"""
+
+            probe.initialize_controller_profiles()
+
+        self.assertEqual(1, len(probe.controller_profile_rows))
+        self.assertEqual(1, len(probe.fleet_map_markers))
+        self.assertEqual(1, len(probe.fleet_status_cards))
+        self.assertEqual("int-9", probe.controller_profile_rows[0]["device_id"])
+        self.assertEqual("int-9", probe.fleet_map_markers[0]["device_id"])
+        self.assertEqual("int-9", probe.fleet_status_cards[0]["device_id"])
+
     def test_fleet_state_refresh_fleet_card_fields_applies_mapping_filter(self):
         class _FleetProbe(FleetStateMixin, rx.State):
             device_profiles_json: str = """[
@@ -755,6 +787,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "controller_profile_map_point_latitude_text",
             "controller_profile_map_point_longitude_text",
             "controller_profile_creation_dialog_open",
+            "initialize_controller_profiles",
             "update_device_profiles_json",
             "update_controller_profile_filter_text",
             "update_controller_profile_mapping_filter",

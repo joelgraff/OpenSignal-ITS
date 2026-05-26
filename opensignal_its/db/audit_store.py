@@ -147,6 +147,18 @@ class AuditStore:
                     )
                     """
                 )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS app_settings (
+                        setting_key TEXT PRIMARY KEY,
+                        value_text TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_app_settings_updated_at ON app_settings(updated_at)"
+                )
                 self._ensure_legacy_columns(conn)
 
     @staticmethod
@@ -218,6 +230,42 @@ class AuditStore:
                         status_text,
                         payload_json,
                     ),
+                )
+
+    def get_app_setting(self, setting_key: str, default: str = "") -> str:
+        key = setting_key.strip()
+        if not key:
+            return default
+
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT value_text FROM app_settings WHERE setting_key = ?",
+                    (key,),
+                ).fetchone()
+
+        if row is None:
+            return default
+
+        return str(row[0])
+
+    def set_app_setting(self, setting_key: str, value_text: str) -> None:
+        key = setting_key.strip()
+        if not key:
+            raise ValueError("setting_key is required")
+
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO app_settings (setting_key, value_text, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(setting_key)
+                    DO UPDATE SET
+                        value_text = excluded.value_text,
+                        updated_at = excluded.updated_at
+                    """,
+                    (key, value_text, _utc_now_iso()),
                 )
 
     def fetch_recent_activity(
