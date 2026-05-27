@@ -88,3 +88,19 @@ Caching `OID_PHASE_MAX_GREEN_1_TEMPLATE` per Siemens M60 instance keeps the firs
 - Cache scope: per `SiemensM60` instance only, and only successful per-phase max-green reads are cached.
 - Warm same-instance `PollingService.collect_snapshot`: 46 GETs, because the connect probe still contributes its existing 2 GETs and the warm poll reuses cached `sysDescr` plus all 16 max-green values.
 - Missing or failed phase max-green reads do not poison the cache; successful phases stay cached and failed phases are retried on later polls.
+
+### Phase 2d Note
+
+Batched GETs keep the warm Siemens M60 object-read count at 44 OID objects but cut the warm SNMP round-trip count from 44 to 5.
+
+- Metric names: `request_count` and `object_count` track OID objects read; `round_trip_count` tracks SNMP GET PDUs.
+- Warm same-instance `PollingService.collect_snapshot`: 46 OID objects and 46 round trips before batching, versus 46 OID objects and 7 round trips after batching, with the existing 2-GET connect probe preserved.
+- Batch failure falls back to individual reads for the affected group and preserves prior output semantics; the missing-group-mask path still resolves to the same object-read baseline while paying extra round trips for the failed batch attempts.
+
+### Phase 2e Note
+
+Batched connect probes keep the warm Siemens M60 object-read count at 44 OID objects but cut the warm end-to-end `PollingService.collect_snapshot` round-trip count from 7 to 6 by turning the 2-GET connect probe into one batched probe.
+
+- Connect semantics stay the same: success still requires at least one of `sysDescr` or `currentPattern`, and the probe falls back to individual reads if the batch fails or returns partial data.
+- Warm same-instance `PollingService.collect_snapshot`: 46 OID objects and 6 round trips end-to-end, with the warm poll still contributing 44 OID objects and 5 round trips.
+- Batch failure or partial connect data falls back to individual connect reads and preserves the existing status text and error behavior.

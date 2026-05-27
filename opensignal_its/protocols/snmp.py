@@ -50,6 +50,31 @@ class SNMPClient:
             return None, str(error_indication or error_status)
         return str(var_binds[0][1]), None
 
+    async def get_oids(
+        self,
+        oids: list[str],
+        mp_model: int,
+        target: UdpTransportTarget | None = None,
+    ) -> tuple[list[str | None], str | None]:
+        resolved_target = target or await self.create_target()
+        iterator = get_cmd(
+            self._engine,
+            CommunityData(self._config.community, mpModel=mp_model),
+            resolved_target,
+            ContextData(),
+            *[ObjectType(ObjectIdentity(oid)) for oid in oids],
+        )
+        error_indication, error_status, _, var_binds = await iterator
+        if error_indication or error_status:
+            return [None for _ in oids], str(error_indication or error_status)
+
+        values = [str(var_bind[1]) for var_bind in var_binds]
+        if len(values) != len(oids):
+            return [None for _ in oids], (
+                f"unexpected response length: expected {len(oids)}, got {len(values)}"
+            )
+        return values, None
+
     async def set_int(
         self,
         oid: str,
