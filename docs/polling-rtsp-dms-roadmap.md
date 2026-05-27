@@ -1,0 +1,107 @@
+## Plan: Polling Efficiency and Device Expansion
+
+TL;DR: The codebase already has a solid device registry, a working Siemens M60 SNMP driver, and a clean state/service split. The next useful pass is to remove duplicated state orchestration, reduce SNMP request volume and retry noise, and then add capability-driven paths for RTSP video and schema-based NTCIP commands so dynamic message signs can be added without overloading the controller polling path.
+
+## Steps
+
+1. Phase 0 - Establish the baseline.
+   - Trace the current request path through Device.start_polling, PollingService.collect_snapshot, FleetStateMixin.refresh_fleet_status, and SiemensM60.poll.
+   - Record the current shape of a single poll cycle: number of GETs, identity OIDs versus live phase OIDs, average cycle time, and how often UI-driven refreshes can overlap background polling.
+   - Identify which OIDs are stable enough to cache or move out of every poll cycle so the measurement feeds directly into the optimization target.
+   - Use that baseline to decide whether a given optimization should reduce traffic, reduce latency, or improve failure recovery.
+
+2. Phase 1 - Remove unnecessary duplication in state and service layers.
+   - Consolidate repeated profile loading, selection, and refresh sync logic across configuration, fleet, monitor, polling, and command slices.
+   - Keep FleetService as the normalization boundary for controller profiles so the state slices stop reparsing the same JSON in parallel ways.
+   - Share the logic for applying a selected controller snapshot to UI state so map markers, fleet cards, and selected-controller detail all come from one path.
+   - Audit compatibility wrappers and thin pass-through helpers so the cleanup removes code that no longer has a real caller, not just code that looks repetitive.
+   - Name the consolidation point explicitly: a shared workflow helper or coordinator should own profile load, state refresh, and runtime sync so the plan has a concrete dedup target.
+   - Keep runtime-registry synchronization centralized so profile edits, deletes, and reloads cannot drift apart.
+
+3. Phase 2 - Cut SNMP request volume and improve polling reliability.
+   - Add per-device request coalescing or in-flight locking in DeviceRuntimeService or PollingService so concurrent refreshes cannot trigger duplicate SNMP calls for the same controller.
+   - Extend SNMPClient with a read-batching helper and refactor SiemensM60.poll to fetch grouped OIDs together instead of many single GETs per phase.
+   - Separate slow-changing controller identity data from fast-changing live status data so stable fields can be cached longer than ring or phase state.
+   - Add backoff after repeated failures and expose stale-state handling in the UI so offline controllers stop being hammered while still showing the last known good status.
+   - Define whether backoff lives in Device.start_polling, PollingService, or SiemensM60 so the retry policy is unambiguous before implementation.
+   - Align the background poll loop and the managed polling path around one cadence policy so there is one authoritative place for sleep, retry, and recovery behavior.
+   - Consider adaptive polling intervals by controller health or change rate only after the basic dedupe and backoff behavior is proven.
+
+4. Phase 3 - Add RTSP and video support as a separate capability.
+   - Treat RTSP as a new device family, not as a branch inside the SNMP controller driver.
+   - Add a media-oriented device or protocol layer that can validate stream reachability and expose stream health metadata.
+   - Decide whether RTSP belongs in a separate protocol handler, a separate device type, or both, and keep its health checks off the controller poll loop by running them in an independent task or service boundary.
+   - Use DeviceConfig.protocol and Device.get_capabilities() to advertise whether a profile supports video controls.
+   - Deliver video to the browser through a relay or transcode path rather than trying to consume raw RTSP directly in the UI.
+   - Keep frame processing and detection cadence independent from controller polling so media load cannot slow SNMP updates.
+   - Replace the current Video Feeds placeholder in monitor.py only after the media path exists and the UI can actually show stream status or playback.
+
+5. Phase 4 - Generalize NTCIP command support for controllers and dynamic message signs.
+   - Move command validation into a schema and capability layer so commands know their parameters, confirmation rules, and writable state before execution.
+   - Keep SiemensM60.command as one implementation of the broader command framework rather than the framework itself.
+   - Add multi-step command support for unlock, apply, confirm, and rollback flows because DMS devices will need transaction-like behavior.
+   - Introduce a dedicated DMS driver and keep its object definitions or vendor profile separate from the signal-controller OIDs.
+   - Choose the first DMS vendor or emulator and whether the schema should live in Pydantic models, driver capability metadata, or both before implementation starts.
+   - Add post-command acknowledgment polling so the UI can distinguish sent, accepted, and confirmed states.
+   - Extend the command tests to cover schema validation and at least one confirm or timeout path for a representative controller target.
+
+6. Phase 5 - Validate each increment with measurable checks.
+   - Add request-count assertions for Siemens M60 polling so the SNMP reduction is visible in tests.
+   - Add focused unit coverage for request coalescing, backoff, stale-state handling, and runtime-registry pruning.
+   - Keep python -m reflex compile --dry --no-rich as the fast compile gate after any state or component refactor.
+   - Add a mock RTSP server or DESCRIBE and SETUP simulator before wiring any playback UI.
+   - Add one command-schema test for a DMS-style target and one acknowledgment test for a controller target.
+
+## Relevant files
+
+- opensignal_its/devices/base.py - shared device abstraction, polling loop, and registry entry point.
+- opensignal_its/devices/siemens_m60.py - current SNMP polling and NTCIP command implementation that needs request reduction and clearer command boundaries.
+- opensignal_its/protocols/snmp.py - low-level SNMP transport wrapper where batching, retries, and backoff belong.
+- opensignal_its/services/polling_service.py - polling orchestration, runtime registry sync, and the right place to centralize polling policy.
+- opensignal_its/services/device_runtime_service.py - long-lived device registry, where duplicate in-flight requests and stale entries should be managed.
+- opensignal_its/services/command_service.py - command execution path that should evolve toward schema-driven validation.
+- opensignal_its/states/configuration_state.py - profile persistence and controller selection state, which still contains repeated refresh orchestration.
+- opensignal_its/states/fleet_state.py - fleet refresh loop and snapshot application.
+- opensignal_its/states/monitor_state.py - selected-controller detail flow and placeholder detail tabs.
+- opensignal_its/states/command_state.py - command UI flow and command safety hooks.
+- opensignal_its/models/device.py - device protocol field and status model that can be extended for video and future device families.
+- opensignal_its/components/workspaces/monitor.py - current Video Feeds placeholder and controller detail presentation.
+- opensignal_its/tests/test_registry_services.py - polling and registry tests that can be extended for coalescing and stale-entry pruning.
+- opensignal_its/tests/test_traffic_state_adapters.py - state adapter coverage for page-load sync and command or poll orchestration.
+- docs/NTCIP_1202_KEY_OBJECTS.json - existing NTCIP controller reference to reuse for command and object modeling.
+
+## Verification
+
+1. Run the focused unit suites for touched state and service slices after each phase.
+2. Run python -m reflex compile --dry --no-rich after any state or component refactor.
+3. Add request-count or call-count assertions for Siemens M60 polling so the SNMP reduction is measurable.
+4. Use a sample RTSP stream or a mocked RTSP server to verify the video driver boundary before adding UI playback.
+5. Validate DMS command behavior with a simulator or mocked device so schema validation and acknowledgment handling are covered.
+
+## Decisions
+
+- Keep the Siemens M60 signal-controller path as the baseline implementation and add new device families behind the existing registry instead of rewriting the device model.
+- Separate video streaming and detection from SNMP polling cadence; do not run frame decode inside the controller poll loop.
+- Treat DMS as a distinct NTCIP device family with schema-driven commands and explicit confirmation rules.
+- Optimize request volume and retry behavior before expanding the amount of data each poll collects.
+- Scope excluded for now: full video analytics training, a broad UI redesign, and vendor-specific DMS support beyond the first target driver.
+
+## Recommended Execution Order
+
+1. Phase 0 and Phase 2 together first: establish a poll baseline, then cut request volume, coalesce duplicate polls, and add backoff or stale handling. This gives the fastest operator impact and the clearest measurement.
+2. Phase 1 next: remove duplicated state and service orchestration so the polling and selection paths have one shared flow.
+3. Phase 3 after polling is stable: add RTSP as a separate capability with only stream-health plumbing first.
+4. Phase 4 last: add schema-driven NTCIP command support and then DMS, since that work depends on the command framework being less ad hoc.
+
+## Phase Exit Criteria
+
+- Phase 1 is done when profile load, selection, map refresh, and runtime-registry sync use one shared path and the duplicated wrapper logic is gone.
+- Phase 2 is done when a measured poll cycle uses fewer SNMP requests, concurrent refreshes do not duplicate work, and repeated failures back off instead of hammering the controller.
+- Phase 3 is done when an RTSP device can report stream reachability and health without affecting controller polling cadence.
+- Phase 4 is done when commands advertise a schema or capability contract and at least one DMS-style command can be validated before execution.
+
+## Further Considerations
+
+1. If you want the most value first, start with SNMP efficiency and polling reliability before any RTSP or DMS work.
+2. For video, the first milestone should be stream health and connectivity, not object detection, because it validates the transport boundary before adding compute-heavy analytics.
+3. For DMS, pick one vendor or emulator first so the object table and command schema are grounded in a real target.
