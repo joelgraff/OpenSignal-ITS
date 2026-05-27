@@ -7,7 +7,7 @@ from typing import Any
 import reflex as rx
 
 from ..db import STORE
-from ..services import FleetService
+from ..services import FleetService, PollingService
 
 
 class ConfigurationStateMixin(rx.State, mixin=True):
@@ -31,6 +31,7 @@ class ConfigurationStateMixin(rx.State, mixin=True):
     controller_profile_form_snmp_version: str = "auto"
     controller_profile_form_timeout_text: str = "3"
     controller_profile_form_retries_text: str = "1"
+    controller_profile_form_polling_enabled: bool = True
     controller_profile_form_latitude_text: str = ""
     controller_profile_form_longitude_text: str = ""
     controller_profile_map_point_latitude_text: str = ""
@@ -71,6 +72,30 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):
             refresh_map(profiles)
+
+        if not self.controller_profile_notice.startswith("Profile JSON error:"):
+            PollingService.sync_runtime_registry(profiles)
+            refresh_runtime_registry = getattr(self, "refresh_runtime_registry_status", None)
+            if callable(refresh_runtime_registry):
+                refresh_runtime_registry()
+
+        selected_hint = (
+            str(getattr(self, "selected_device_id", "")).strip()
+            or str(getattr(self, "controller_profile_original_device_id", "")).strip()
+            or str(getattr(self, "controller_profile_form_device_id", "")).strip()
+        )
+        selected_profile = FleetService.select_profile(profiles, selected_hint)
+        selected_device_id = str(selected_profile.get("device_id", "")).strip() if selected_profile else ""
+        load_profile = getattr(self, "load_controller_profile", None)
+        if selected_device_id and callable(load_profile):
+            load_profile(selected_device_id)
+
+        if hasattr(self, "auto_refresh_running"):
+            self.auto_refresh_running = False
+
+        auto_refresh_handler = getattr(type(self), "auto_refresh_loop", None)
+        if callable(auto_refresh_handler) and getattr(auto_refresh_handler, "is_background", False):
+            return auto_refresh_handler()
 
     def update_controller_profile_filter_text(self, value: str):
         self.controller_profile_filter_text = value
@@ -128,6 +153,9 @@ class ConfigurationStateMixin(rx.State, mixin=True):
     def update_controller_profile_form_retries_text(self, value: str):
         self.controller_profile_form_retries_text = value
 
+    def update_controller_profile_form_polling_enabled(self, value: bool):
+        self.controller_profile_form_polling_enabled = bool(value)
+
     def update_controller_profile_form_latitude_text(self, value: str):
         self.controller_profile_form_latitude_text = value
 
@@ -176,6 +204,7 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         self.controller_profile_form_snmp_version = "auto"
         self.controller_profile_form_timeout_text = "3"
         self.controller_profile_form_retries_text = "1"
+        self.controller_profile_form_polling_enabled = True
         self.controller_profile_form_latitude_text = ""
         self.controller_profile_form_longitude_text = ""
 
@@ -266,6 +295,11 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         self.controller_profile_form_longitude_text = (
             "" if selected.get("longitude") is None else str(selected.get("longitude", ""))
         )
+        self.controller_profile_form_polling_enabled = bool(selected.get("polling_enabled", True))
+        if hasattr(self, "managed_polling_notice"):
+            self.managed_polling_notice = (
+                f"Active polling is {'enabled' if self.controller_profile_form_polling_enabled else 'paused'} for {target}."
+            )
         self.selected_device_id = self.controller_profile_form_device_id
         self.controller_profile_notice = f"Loaded controller profile {target}."
         self.controller_profile_form_error = ""
@@ -326,6 +360,7 @@ class ConfigurationStateMixin(rx.State, mixin=True):
                 retries_text=self.controller_profile_form_retries_text,
                 latitude_text=self.controller_profile_form_latitude_text,
                 longitude_text=self.controller_profile_form_longitude_text,
+                polling_enabled=self.controller_profile_form_polling_enabled,
             )
             updated_profiles = FleetService.upsert_profile(updated_profiles, profile)
         except Exception as exc:
@@ -349,6 +384,10 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):
             refresh_map(updated_profiles)
+        PollingService.sync_runtime_registry(updated_profiles)
+        refresh_runtime_registry = getattr(self, "refresh_runtime_registry_status", None)
+        if callable(refresh_runtime_registry):
+            refresh_runtime_registry()
         return rx.remove_local_storage(FleetService.MAP_CREATE_STORAGE_KEY)
 
     def delete_controller_profile(self):
@@ -381,7 +420,63 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):
             refresh_map(updated_profiles)
+        PollingService.sync_runtime_registry(updated_profiles)
+        refresh_runtime_registry = getattr(self, "refresh_runtime_registry_status", None)
+        if callable(refresh_runtime_registry):
+            refresh_runtime_registry()
 
+    def update_controller_profile_polling_enabled(self, value: bool):
+        self.controller_profile_form_error = ""
+        target = self.controller_profile_original_device_id.strip() or self.selected_device_id.strip()
+        if not target:
+            self.controller_profile_notice = "Choose a controller profile before changing polling."
+            return
+
+        try:
+            profiles = FleetService.parse_profiles_json(self.device_profiles_json)
+        except Exception as exc:
+            self.controller_profile_form_error = str(exc)
+            self.controller_profile_notice = f"Cannot update polling state: {exc}"
+            return
+
+        polling_enabled = bool(value)
+        updated_profiles: list[dict[str, Any]] = []
+        found = False
+        for profile in profiles:
+            normalized = dict(profile)
+            if str(normalized.get("device_id", "")).strip() == target:
+                normalized["polling_enabled"] = polling_enabled
+                found = True
+            updated_profiles.append(normalized)
+
+        if not found:
+            self.controller_profile_notice = f"Controller profile {target} was not found."
+            return
+
+        self.controller_profile_form_polling_enabled = polling_enabled
+        if hasattr(self, "managed_polling_notice"):
+            self.managed_polling_notice = (
+                f"Active polling is {'enabled' if polling_enabled else 'paused'} for {target}."
+            )
+        self.device_profiles_json = FleetService.dump_profiles_json(updated_profiles)
+        self._persist_controller_profiles_json()
+        self._sync_controller_profile_rows(
+            f"Polling {'enabled' if polling_enabled else 'disabled'} for {target}."
+        )
+        refresh_cards = getattr(self, "_refresh_fleet_card_fields", None)
+        if callable(refresh_cards):
+            refresh_cards(updated_profiles)
+        refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
+        if callable(refresh_map):
+            refresh_map(updated_profiles)
+        PollingService.sync_runtime_registry(updated_profiles)
+        refresh_runtime_registry = getattr(self, "refresh_runtime_registry_status", None)
+        if callable(refresh_runtime_registry):
+            refresh_runtime_registry()
+
+        refresh_fleet_status = getattr(type(self), "refresh_fleet_status", None)
+        if callable(refresh_fleet_status):
+            return refresh_fleet_status()
     def open_selected_controller_status(self):
         target = self.controller_profile_form_device_id.strip() or self.controller_profile_original_device_id.strip()
         if not target:

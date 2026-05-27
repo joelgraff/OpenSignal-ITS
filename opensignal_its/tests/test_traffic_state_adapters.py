@@ -237,13 +237,14 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertIn("Showing 1 of 2 controller profiles.", probe.controller_profile_notice)
 
     def test_configuration_state_open_controller_profile_editor_switches_workspace_and_loads_profile(self):
-        class _ConfigurationWorkspaceProbe(ConfigurationStateMixin, WorkspaceStateMixin, rx.State):
+        class _ConfigurationWorkspaceProbe(ConfigurationStateMixin, PollingStateMixin, WorkspaceStateMixin, rx.State):
             device_profiles_json: str = """[
                 {
                     "device_id": "int-2",
                     "name": "Broadway",
                     "device_type": "siemens_m60",
-                    "ip_address": "10.0.0.2"
+                    "ip_address": "10.0.0.2",
+                    "polling_enabled": false
                 }
             ]"""
             controller_profile_filter_text: str = "downtown"
@@ -260,6 +261,8 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual("all", probe.controller_profile_mapping_filter)
         self.assertEqual("int-2", probe.controller_profile_form_device_id)
         self.assertEqual("Broadway", probe.controller_profile_form_name)
+        self.assertFalse(probe.controller_profile_form_polling_enabled)
+        self.assertIn("paused for int-2", probe.managed_polling_notice)
         self.assertIn("Opened Controllers for int-2.", probe.controller_profile_notice)
 
     def test_configuration_state_initialize_controller_profiles_rehydrates_map_and_rows(self):
@@ -269,12 +272,18 @@ class TrafficStateAdapterTests(unittest.TestCase):
             controller_profile_sort_desc: bool = False
             selected_device_id: str = ""
             fleet_status_by_id: dict[str, object] = {}
+            auto_refresh_running: bool = True
+            runtime_registry_refreshed: bool = False
+
+            def refresh_runtime_registry_status(self):
+                self.runtime_registry_refreshed = True
 
         probe = _ConfigurationLoadProbe(_reflex_internal_init=True)
 
-        with patch(
-            "opensignal_its.states.configuration_state.STORE"
-        ) as store:
+        with patch("opensignal_its.states.configuration_state.STORE") as store, patch(
+            "opensignal_its.states.configuration_state.PollingService.sync_runtime_registry",
+            return_value=[],
+        ) as sync_runtime_registry:
             store.get_app_setting.return_value = """[
                 {
                     "device_id": "int-9",
@@ -285,14 +294,89 @@ class TrafficStateAdapterTests(unittest.TestCase):
                 }
             ]"""
 
-            probe.initialize_controller_profiles()
+            loop_spec = probe.initialize_controller_profiles()
 
         self.assertEqual(1, len(probe.controller_profile_rows))
         self.assertEqual(1, len(probe.fleet_map_markers))
         self.assertEqual(1, len(probe.fleet_status_cards))
+        self.assertEqual("int-9", probe.selected_device_id)
+        self.assertEqual("int-9", probe.controller_profile_form_device_id)
+        self.assertTrue(probe.controller_profile_form_polling_enabled)
+        self.assertFalse(probe.auto_refresh_running)
+        self.assertTrue(probe.runtime_registry_refreshed)
         self.assertEqual("int-9", probe.controller_profile_rows[0]["device_id"])
         self.assertEqual("int-9", probe.fleet_map_markers[0]["device_id"])
         self.assertEqual("int-9", probe.fleet_status_cards[0]["device_id"])
+        sync_runtime_registry.assert_called_once()
+        self.assertEqual("int-9", sync_runtime_registry.call_args.args[0][0]["device_id"])
+        self.assertIsNotNone(loop_spec)
+        self.assertTrue(loop_spec.handler.is_background)
+        self.assertEqual("auto_refresh_loop", loop_spec.handler.fn.__name__)
+
+    def test_configuration_state_initialize_controller_profiles_prefers_last_loaded_controller_hint(self):
+        class _ConfigurationLoadProbe(ConfigurationStateMixin, FleetStateMixin, rx.State):
+            device_profiles_json: str = "[]"
+            controller_profile_sort_key: str = "device_id"
+            controller_profile_sort_desc: bool = False
+            selected_device_id: str = ""
+            controller_profile_original_device_id: str = "persist-1"
+            controller_profile_form_device_id: str = "persist-1"
+            fleet_status_by_id: dict[str, object] = {}
+
+        probe = _ConfigurationLoadProbe(_reflex_internal_init=True)
+
+        with patch("opensignal_its.states.configuration_state.STORE") as store:
+            store.get_app_setting.return_value = """[
+                {
+                    "device_id": "000",
+                    "device_type": "siemens_m60",
+                    "ip_address": "166.156.88.223"
+                },
+                {
+                    "device_id": "persist-1",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.11",
+                    "polling_enabled": false
+                }
+            ]"""
+
+            probe.initialize_controller_profiles()
+
+        self.assertEqual("persist-1", probe.selected_device_id)
+        self.assertEqual("persist-1", probe.controller_profile_form_device_id)
+        self.assertFalse(probe.controller_profile_form_polling_enabled)
+
+    def test_configuration_state_update_controller_profile_polling_enabled_updates_state_and_requests_refresh(self):
+        class _ConfigurationPollingProbe(
+            ConfigurationStateMixin,
+            FleetStateMixin,
+            PollingStateMixin,
+            rx.State,
+        ):
+            device_profiles_json: str = """[
+                {
+                    "device_id": "int-4",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.4",
+                    "polling_enabled": true
+                }
+            ]"""
+            controller_profile_sort_key: str = "device_id"
+            controller_profile_sort_desc: bool = False
+            controller_profile_original_device_id: str = "int-4"
+            selected_device_id: str = "int-4"
+            fleet_status_by_id: dict[str, object] = {}
+
+        probe = _ConfigurationPollingProbe(_reflex_internal_init=True)
+
+        with patch("opensignal_its.states.configuration_state.STORE"):
+            event_spec = probe.update_controller_profile_polling_enabled(False)
+
+        self.assertFalse(probe.controller_profile_form_polling_enabled)
+        self.assertIn('"polling_enabled": false', probe.device_profiles_json)
+        self.assertIn("paused for int-4", probe.managed_polling_notice)
+        self.assertIsNotNone(event_spec)
+        self.assertEqual("refresh_fleet_status", event_spec.handler.fn.__name__)
 
     def test_fleet_state_refresh_fleet_card_fields_applies_mapping_filter(self):
         class _FleetProbe(FleetStateMixin, rx.State):
@@ -434,15 +518,20 @@ class TrafficStateAdapterTests(unittest.TestCase):
         class _MonitorRowProbe(MonitorStateMixin, rx.State):
             selected_device_id: str = ""
             monitor_view: str = "dashboard"
+            loaded_device_id: str = ""
             refresh_called: bool = False
 
-            async def refresh_status(self):
+            def load_controller_profile_from_row(self, device_id: str):
+                self.loaded_device_id = device_id
+
+            async def refresh_fleet_status(self):
                 self.refresh_called = True
 
         probe = _MonitorRowProbe(_reflex_internal_init=True)
 
         asyncio.run(probe.select_controller_from_row("int-2 | Broadway"))
 
+        self.assertEqual("int-2", probe.loaded_device_id)
         self.assertTrue(probe.refresh_called)
         self.assertEqual("int-2", probe.selected_device_id)
         self.assertEqual("intersection", probe.monitor_view)
@@ -473,9 +562,13 @@ class TrafficStateAdapterTests(unittest.TestCase):
         class _MonitorMapProbe(MonitorStateMixin, rx.State):
             selected_device_id: str = ""
             monitor_view: str = "dashboard"
+            loaded_device_id: str = ""
             refresh_called: bool = False
 
-            async def refresh_status(self):
+            def load_controller_profile_from_row(self, device_id: str):
+                self.loaded_device_id = device_id
+
+            async def refresh_fleet_status(self):
                 self.refresh_called = True
 
         probe = _MonitorMapProbe(_reflex_internal_init=True)
@@ -489,21 +582,25 @@ class TrafficStateAdapterTests(unittest.TestCase):
             )
         )
 
+        self.assertEqual("int-7", probe.loaded_device_id)
         self.assertTrue(probe.refresh_called)
         self.assertEqual("int-7", probe.selected_device_id)
         self.assertEqual("intersection", probe.monitor_view)
 
     def test_monitor_state_connect_and_start_polling_starts_managed_polling(self):
-        class _MonitorConnectProbe(MonitorStateMixin, PollingStateMixin, rx.State):
+        class _MonitorConnectProbe(MonitorStateMixin, FleetStateMixin, PollingStateMixin, rx.State):
             is_online: bool = False
             managed_polling_notice: str = ""
             managed_polling_interval_text: str = "7"
             runtime_registry_summary: str = ""
             runtime_registry_rows: list[str] = []
+            auto_refresh_enabled: bool = False
+            auto_reconnect_enabled: bool = False
             health_refreshed: bool = False
             registry_refreshed: bool = False
             connect_called: bool = False
             start_called: bool = False
+            auto_refresh_loop = TrafficState.auto_refresh_loop
 
             def refresh_runtime_health(self):
                 self.health_refreshed = True
@@ -518,6 +615,48 @@ class TrafficStateAdapterTests(unittest.TestCase):
             async def start_selected_managed_polling(self):
                 self.start_called = True
                 self.managed_polling_notice = "Managed polling started. Refreshing every 7s."
+                return True
+
+        probe = _MonitorConnectProbe(_reflex_internal_init=True)
+
+        loop_spec = asyncio.run(probe.connect_and_start_polling())
+
+        self.assertTrue(probe.connect_called)
+        self.assertTrue(probe.start_called)
+        self.assertTrue(probe.health_refreshed)
+        self.assertTrue(probe.registry_refreshed)
+        self.assertTrue(probe.auto_refresh_enabled)
+        self.assertTrue(probe.auto_reconnect_enabled)
+        self.assertIsNotNone(loop_spec)
+        self.assertTrue(loop_spec.handler.is_background)
+        self.assertEqual("auto_refresh_loop", loop_spec.handler.fn.__name__)
+        self.assertIn("Refreshing every 7s.", probe.managed_polling_notice)
+
+    def test_monitor_state_connect_and_start_polling_still_attempts_restart_when_probe_is_offline(self):
+        class _MonitorConnectProbe(MonitorStateMixin, FleetStateMixin, PollingStateMixin, rx.State):
+            is_online: bool = False
+            managed_polling_notice: str = ""
+            managed_polling_interval_text: str = "7"
+            runtime_registry_summary: str = ""
+            runtime_registry_rows: list[str] = []
+            auto_refresh_enabled: bool = False
+            auto_reconnect_enabled: bool = False
+            connect_called: bool = False
+            start_called: bool = False
+
+            def refresh_runtime_health(self):
+                pass
+
+            def refresh_runtime_registry_status(self):
+                pass
+
+            async def connect_m60(self):
+                self.connect_called = True
+                self.is_online = False
+
+            async def start_selected_managed_polling(self):
+                self.start_called = True
+                self.managed_polling_notice = "Managed polling start attempted."
 
         probe = _MonitorConnectProbe(_reflex_internal_init=True)
 
@@ -525,9 +664,53 @@ class TrafficStateAdapterTests(unittest.TestCase):
 
         self.assertTrue(probe.connect_called)
         self.assertTrue(probe.start_called)
-        self.assertTrue(probe.health_refreshed)
-        self.assertTrue(probe.registry_refreshed)
-        self.assertIn("Refreshing every 7s.", probe.managed_polling_notice)
+        self.assertTrue(probe.auto_refresh_enabled)
+        self.assertTrue(probe.auto_reconnect_enabled)
+        self.assertIn("Managed polling start attempted.", probe.managed_polling_notice)
+
+    def test_polling_state_stop_selected_managed_polling_clears_auto_refresh_flags(self):
+        class _PollingProbe(FleetStateMixin, PollingStateMixin, rx.State):
+            selected_device_id: str = "int-1"
+            auto_refresh_enabled: bool = True
+            auto_reconnect_enabled: bool = True
+            managed_polling_notice: str = ""
+            error: str = ""
+            runtime_registry_refreshed: bool = False
+
+            def _selected_device_target(self):
+                return (
+                    "siemens_m60",
+                    "int-1",
+                    type(
+                        "_Config",
+                        (),
+                        {
+                            "ip_address": "10.0.0.1",
+                            "port": 161,
+                            "community": "public",
+                            "snmp_version": "v1",
+                            "timeout_seconds": 3.0,
+                            "retries": 1,
+                            "name": "Fake",
+                        },
+                    )(),
+                )
+
+            def refresh_runtime_registry_status(self):
+                self.runtime_registry_refreshed = True
+
+        probe = _PollingProbe(_reflex_internal_init=True)
+
+        with patch(
+            "opensignal_its.states.polling_state.PollingService.stop_managed_polling",
+            return_value=(True, "Managed polling stopped for siemens_m60::int-1."),
+        ):
+            probe.stop_selected_managed_polling()
+
+        self.assertFalse(probe.auto_refresh_enabled)
+        self.assertFalse(probe.auto_reconnect_enabled)
+        self.assertTrue(probe.runtime_registry_refreshed)
+        self.assertIn("stopped", probe.managed_polling_notice)
 
     def test_polling_state_start_selected_managed_polling_announces_interval(self):
         class _PollingProbe(PollingStateMixin, rx.State):
@@ -782,6 +965,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "controller_profile_form_snmp_version",
             "controller_profile_form_timeout_text",
             "controller_profile_form_retries_text",
+            "controller_profile_form_polling_enabled",
             "controller_profile_form_latitude_text",
             "controller_profile_form_longitude_text",
             "controller_profile_map_point_latitude_text",
@@ -803,6 +987,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "update_controller_profile_form_snmp_version",
             "update_controller_profile_form_timeout_text",
             "update_controller_profile_form_retries_text",
+            "update_controller_profile_form_polling_enabled",
             "update_controller_profile_form_latitude_text",
             "update_controller_profile_form_longitude_text",
             "select_controller_profile_map_point",
@@ -812,6 +997,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "new_controller_profile",
             "load_controller_profile",
             "load_controller_profile_from_row",
+            "update_controller_profile_polling_enabled",
             "open_controller_profile_editor",
             "save_controller_profile",
             "delete_controller_profile",
@@ -930,6 +1116,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
         missing = [name for name in required if not hasattr(TrafficState, name)]
 
         self.assertEqual([], missing)
+        self.assertTrue(TrafficState.auto_refresh_loop.is_background)
 
     def test_traffic_state_exposes_audit_state_members(self):
         required = [

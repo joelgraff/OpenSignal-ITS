@@ -42,23 +42,7 @@ def dashboard():
                     rx.badge(f"ALARMS {TrafficState.alarm_rows.length()}", color_scheme="orange"),
                     rx.cond(
                         TrafficState.is_authenticated,
-                        rx.hstack(
-                            rx.button(
-                                "Connect & poll",
-                                on_click=TrafficState.connect_and_start_polling,
-                                is_disabled=TrafficState.is_loading,
-                                color_scheme="green",
-                                size="1",
-                            ),
-                            rx.button(
-                                "Refresh once",
-                                on_click=TrafficState.refresh_status,
-                                is_disabled=TrafficState.is_loading,
-                                size="1",
-                                variant="outline",
-                            ),
-                            spacing="1",
-                        ),
+                        rx.fragment(),
                         rx.badge("SIGN-IN REQUIRED", color_scheme="orange"),
                     ),
                     spacing="2",

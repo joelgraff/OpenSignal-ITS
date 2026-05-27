@@ -13,6 +13,7 @@ class FleetServiceTests(unittest.TestCase):
         self.assertEqual(1, len(profiles))
         self.assertEqual("int-1", profiles[0]["device_id"])
         self.assertEqual("siemens_m60", profiles[0]["device_type"])
+        self.assertTrue(profiles[0]["polling_enabled"])
         self.assertEqual(40.0, profiles[0]["latitude"])
         self.assertEqual(-75.0, profiles[0]["longitude"])
 
@@ -73,6 +74,7 @@ class FleetServiceTests(unittest.TestCase):
 
         self.assertEqual(1, len(rows))
         self.assertIn("int-1 | 10.0.0.1 | siemens_m60", rows[0])
+        self.assertIn("polling on", rows[0])
         self.assertIn("Main & 1st", rows[0])
 
     def test_filter_profiles_matches_device_id_name_and_ip(self):
@@ -86,8 +88,8 @@ class FleetServiceTests(unittest.TestCase):
             },
             {
                 "device_id": "int-2",
-                "device_type": "siemens_m60",
                 "ip_address": "10.0.0.2",
+                "device_type": "siemens_m60",
                 "name": "Broadway",
             },
         ]
@@ -160,8 +162,14 @@ class FleetServiceTests(unittest.TestCase):
                 "ip_address": "10.0.0.1",
                 "latitude": 40.7128,
                 "longitude": -74.0060,
+                "polling_enabled": True,
             },
-            {"device_id": "int-2", "device_type": "siemens_m60", "ip_address": "10.0.0.2"},
+            {
+                "device_id": "int-2",
+                "device_type": "siemens_m60",
+                "ip_address": "10.0.0.2",
+                "polling_enabled": False,
+            },
             {"device_id": "int-3", "device_type": "siemens_m60", "ip_address": "10.0.0.3"},
         ]
         status_map = {
@@ -173,18 +181,24 @@ class FleetServiceTests(unittest.TestCase):
 
         self.assertEqual("Online", rows[0]["status_label"])
         self.assertEqual("green", rows[0]["status_scheme"])
+        self.assertEqual("Polling On", rows[0]["polling_label"])
+        self.assertEqual("green", rows[0]["polling_scheme"])
         self.assertEqual("Mapped", rows[0]["mapping_label"])
         self.assertEqual("40.71280, -74.00600", rows[0]["coordinate_text"])
         self.assertEqual("No status detail.", rows[0]["detail_text"])
         self.assertEqual("", rows[0]["updated_text"])
         self.assertEqual("Offline", rows[1]["status_label"])
         self.assertEqual("red", rows[1]["status_scheme"])
+        self.assertEqual("Polling Off", rows[1]["polling_label"])
+        self.assertEqual("gray", rows[1]["polling_scheme"])
         self.assertEqual("Needs Coordinates", rows[1]["mapping_label"])
         self.assertEqual("Coordinates not set", rows[1]["coordinate_text"])
-        self.assertEqual("No status detail.", rows[1]["detail_text"])
+        self.assertEqual("Polling disabled", rows[1]["detail_text"])
         self.assertEqual("", rows[1]["updated_text"])
         self.assertEqual("Unknown", rows[2]["status_label"])
         self.assertEqual("gray", rows[2]["status_scheme"])
+        self.assertEqual("Polling On", rows[2]["polling_label"])
+        self.assertEqual("green", rows[2]["polling_scheme"])
         self.assertEqual("Needs Coordinates", rows[2]["mapping_label"])
         self.assertEqual("No poll data yet.", rows[2]["detail_text"])
         self.assertEqual("", rows[2]["updated_text"])
@@ -232,6 +246,7 @@ class FleetServiceTests(unittest.TestCase):
         self.assertEqual(161, profile["port"])
         self.assertEqual(3.5, profile["timeout_seconds"])
         self.assertEqual(2, profile["retries"])
+        self.assertTrue(profile["polling_enabled"])
         self.assertEqual("Main & 1st / Downtown", profile["location_name"])
         self.assertEqual(40.7128, profile["latitude"])
         self.assertEqual(-74.006, profile["longitude"])
@@ -360,6 +375,7 @@ class FleetServiceTests(unittest.TestCase):
         self.assertEqual("int-1", markers[0]["device_id"])
         self.assertEqual("Main & 1st", markers[0]["label"])
         self.assertEqual("Online", markers[0]["status_label"])
+        self.assertEqual("Polling On", markers[0]["polling_label"])
         self.assertTrue(bool(markers[0]["is_selected"]))
 
     def test_build_map_data_uses_mapbox_trace(self):

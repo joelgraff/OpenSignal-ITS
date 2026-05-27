@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
 import reflex as rx
 
-from ..models.fleet import FleetRefreshView
+from ..models.fleet import FleetRefreshView, FleetSnapshotEntry
 from ..services import FleetService, PollingService
 
 
@@ -227,61 +228,120 @@ class FleetStateMixin(rx.State, mixin=True):
         try:
             profiles = self._fleet_profiles()
         except Exception as exc:
-            self.fleet_status_summary = f"Controller profile parse failed: {exc}"
-            self.fleet_status_by_id = {}
-            self.fleet_status_cards = []
-            self.fleet_status_card_notice = "Fix controller profile JSON to populate the controller list."
-            self.fleet_map_markers = []
-            self.fleet_unmapped_device_ids = []
-            self.fleet_unmapped_profile_rows = []
-            self.fleet_map_data = []
-            self.fleet_map_layout = {}
-            self.fleet_map_figure = {}
-            self.fleet_map_src_doc = FleetService.build_map_src_doc([], self.selected_device_id)
-            self.fleet_map_notice = "Fix controller profile JSON to render the signal map."
-            self.fleet_device_rows = []
-            self.error = self.fleet_status_summary
+            async with self:
+                self.fleet_status_summary = f"Controller profile parse failed: {exc}"
+                self.fleet_status_by_id = {}
+                self.fleet_status_cards = []
+                self.fleet_status_card_notice = "Fix controller profile JSON to populate the controller list."
+                self.fleet_map_markers = []
+                self.fleet_unmapped_device_ids = []
+                self.fleet_unmapped_profile_rows = []
+                self.fleet_map_data = []
+                self.fleet_map_layout = {}
+                self.fleet_map_figure = {}
+                self.fleet_map_src_doc = FleetService.build_map_src_doc([], self.selected_device_id)
+                self.fleet_map_notice = "Fix controller profile JSON to render the signal map."
+                self.fleet_device_rows = []
+                self.error = self.fleet_status_summary
             return
+
+        PollingService.sync_runtime_registry(profiles)
 
         if not profiles:
-            self.fleet_status_summary = "Controller profile list is empty; using single-controller compatibility mode."
-            self.fleet_status_by_id = {}
-            self._refresh_fleet_card_fields([])
-            self._refresh_fleet_map_fields([])
-            self.fleet_device_rows = []
-            self._sync_controller_profile_rows()
+            async with self:
+                self.fleet_status_summary = "Controller profile list is empty; using single-controller compatibility mode."
+                self.fleet_status_by_id = {}
+                self._refresh_fleet_card_fields([])
+                self._refresh_fleet_map_fields([])
+                self.fleet_device_rows = []
+                self._sync_controller_profile_rows()
             return
 
-        refresh_view = await FleetService.collect_refresh_view(
-            profiles=profiles,
-            selected_device_id=self.selected_device_id,
-            collector=PollingService.collect_snapshot,
-        )
-        adapted = _fleet_view_to_state_fields(refresh_view)
-        self.selected_device_id = str(adapted["selected_device_id"])
-        self.fleet_status_by_id = dict(adapted["fleet_status_by_id"])
-        self._refresh_fleet_card_fields(profiles)
-        self.fleet_device_rows = list(adapted["fleet_device_rows"])
-        self._refresh_fleet_map_fields(profiles)
-        self._sync_controller_profile_rows()
-        self._refresh_fleet_aggregate_fields()
-        self.refresh_runtime_registry_status()
+        selected_profile = FleetService.select_profile(profiles, self.selected_device_id)
+        effective_selected_id = str(selected_profile.get("device_id", "")).strip() if selected_profile else ""
 
-        selected_payload = adapted["selected_payload"]
-        if selected_payload is not None:
-            self._apply_status_snapshot(
-                dict(selected_payload),
-                int(adapted["selected_mp_model"]),
+        entries: list[FleetSnapshotEntry] = []
+        for profile in profiles:
+            normalized = FleetService.normalize_profile(profile)
+            device_id = str(normalized["device_id"])
+            device_type = str(normalized.get("device_type", FleetService.DEFAULT_DEVICE_TYPE))
+            config = FleetService.build_device_config(normalized)
+
+            if bool(normalized.get("polling_enabled", True)):
+                try:
+                    payload, mp_model = await PollingService.collect_snapshot(
+                        device_type,
+                        config,
+                        device_id=device_id,
+                    )
+                except Exception as exc:
+                    entries.append(
+                        FleetService.build_snapshot_entry(
+                            device_id=device_id,
+                            device_type=device_type,
+                            payload=None,
+                            mp_model=1,
+                            error=str(exc),
+                        )
+                    )
+                else:
+                    entries.append(
+                        FleetService.build_snapshot_entry(
+                            device_id=device_id,
+                            device_type=device_type,
+                            payload=payload,
+                            mp_model=mp_model,
+                        )
+                    )
+                continue
+
+            entries.append(
+                FleetService.build_snapshot_entry(
+                    device_id=device_id,
+                    device_type=device_type,
+                    payload={
+                        "is_online": False,
+                        "status_text": "Polling disabled",
+                        "timestamp": "",
+                    },
+                    mp_model=1,
+                )
             )
-            self._cache_device_status(
-                self.selected_device_id,
-                str(adapted["selected_device_type"]),
-                dict(selected_payload),
-            )
+
+        refresh_view = FleetService.compile_refresh_view(entries, effective_selected_id)
+        adapted = _fleet_view_to_state_fields(refresh_view)
+
+        async with self:
+            self.selected_device_id = str(adapted["selected_device_id"])
+            self.fleet_status_by_id = dict(adapted["fleet_status_by_id"])
+            self._refresh_fleet_card_fields(profiles)
+            self.fleet_device_rows = list(adapted["fleet_device_rows"])
+            self._refresh_fleet_map_fields(profiles)
+            self._sync_controller_profile_rows()
+            self._refresh_fleet_aggregate_fields()
+            self.refresh_runtime_registry_status()
+
+            selected_payload = adapted["selected_payload"]
+            if selected_payload is not None:
+                self._apply_status_snapshot(
+                    dict(selected_payload),
+                    int(adapted["selected_mp_model"]),
+                )
+                self._cache_device_status(
+                    self.selected_device_id,
+                    str(adapted["selected_device_type"]),
+                    dict(selected_payload),
+                )
+            else:
+                selected_status = dict(self.fleet_status_by_id.get(self.selected_device_id, {}))
+                if selected_status:
+                    self.is_online = bool(selected_status.get("is_online", False))
+                    self.status_text = str(selected_status.get("status_text", "Unknown"))
+                    self.last_updated = str(selected_status.get("timestamp", ""))
 
     @rx.event(background=True)
     async def auto_refresh_loop(self):
-        """Continuously poll while online and auto-reconnect when offline."""
+        """Continuously poll the fleet while active polling is enabled."""
         async with self:
             if self.auto_refresh_running:
                 return
@@ -291,52 +351,17 @@ class FleetStateMixin(rx.State, mixin=True):
             while True:
                 async with self:
                     refresh_enabled = self.auto_refresh_enabled
-                    reconnect_enabled = self.auto_reconnect_enabled
-                    is_online = self.is_online
-                    is_loading = self.is_loading
                     refresh_interval = self._refresh_interval_seconds()
-                    reconnect_interval = self._reconnect_interval_seconds()
 
-                    should_continue = refresh_enabled or reconnect_enabled
-                if not should_continue:
+                if not refresh_enabled:
                     break
 
-                if is_loading:
-                    await asyncio.sleep(1.0)
-                    continue
-
-                if (not is_online) and reconnect_enabled:
-                    try:
-                        device_id, device_type, status_payload, mp_model = await self._collect_selected_status_snapshot()
-                    except ValueError:
-                        async with self:
-                            self.m60_status = {
-                                "error": "Port, timeout, and retries must be numeric.",
-                            }
-                            self.m60_status_json = json.dumps(self.m60_status, indent=2)
-                            self.error = self.m60_status["error"]
-                            self.status_text = "Input validation failed"
-                            self.is_online = False
-                    except Exception as exc:
-                        async with self:
-                            self.m60_status = {"error": f"Unhandled exception: {exc}"}
-                            self.m60_status_json = json.dumps(self.m60_status, indent=2)
-                            self.error = self.m60_status["error"]
-                            self.status_text = "Unhandled exception"
-                            self.is_online = False
-                    else:
-                        async with self:
-                            self._apply_status_snapshot(status_payload, mp_model)
-                            self._cache_device_status(device_id, device_type, status_payload)
-                    await asyncio.sleep(reconnect_interval)
-                    continue
-
-                if is_online and refresh_enabled:
-                    await self.refresh_status()
-                    await asyncio.sleep(refresh_interval)
-                    continue
-
-                await asyncio.sleep(1.0)
+                cycle_started_at = time.monotonic()
+                await self.refresh_fleet_status()
+                cycle_elapsed = time.monotonic() - cycle_started_at
+                sleep_seconds = max(0.0, refresh_interval - cycle_elapsed)
+                if sleep_seconds > 0:
+                    await asyncio.sleep(sleep_seconds)
         finally:
             async with self:
                 self.auto_refresh_running = False

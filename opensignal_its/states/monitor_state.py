@@ -90,19 +90,27 @@ class MonitorStateMixin(rx.State, mixin=True):
 
     def back_to_dashboard(self):
         self.monitor_view = "dashboard"
+        refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
+        if callable(refresh_map):
+            refresh_map()
 
     async def select_controller_from_row(self, row: str):
         tokenized = row.strip().split()
         if tokenized:
             self.selected_device_id = tokenized[0]
             self.monitor_view = "intersection"
+            load_profile = getattr(self, "load_controller_profile_from_row", None)
+            if callable(load_profile):
+                load_profile(self.selected_device_id)
             close_dialog = getattr(self, "close_controller_profile_creation_dialog", None)
             if callable(close_dialog):
                 close_dialog()
             refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
             if callable(refresh_map):
                 refresh_map()
-            await self.refresh_status()
+            refresh_fleet_status = getattr(self, "refresh_fleet_status", None)
+            if callable(refresh_fleet_status):
+                await refresh_fleet_status()
 
     async def select_controller_from_map_points(self, points: list[dict[str, Any]]):
         if not points:
@@ -124,13 +132,18 @@ class MonitorStateMixin(rx.State, mixin=True):
 
         self.selected_device_id = device_id
         self.monitor_view = "intersection"
+        load_profile = getattr(self, "load_controller_profile_from_row", None)
+        if callable(load_profile):
+            load_profile(device_id)
         close_dialog = getattr(self, "close_controller_profile_creation_dialog", None)
         if callable(close_dialog):
             close_dialog()
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):
             refresh_map()
-        await self.refresh_status()
+        refresh_fleet_status = getattr(self, "refresh_fleet_status", None)
+        if callable(refresh_fleet_status):
+            await refresh_fleet_status()
 
     async def sync_map_selection_from_storage(
         self,
@@ -150,13 +163,18 @@ class MonitorStateMixin(rx.State, mixin=True):
 
             self.selected_device_id = selected_device_id
             self.monitor_view = "intersection"
+            load_profile = getattr(self, "load_controller_profile_from_row", None)
+            if callable(load_profile):
+                load_profile(selected_device_id)
             close_dialog = getattr(self, "close_controller_profile_creation_dialog", None)
             if callable(close_dialog):
                 close_dialog()
             refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
             if callable(refresh_map):
                 refresh_map()
-            await self.refresh_status()
+            refresh_fleet_status = getattr(self, "refresh_fleet_status", None)
+            if callable(refresh_fleet_status):
+                await refresh_fleet_status()
             return
 
         if key != FleetService.MAP_CREATE_STORAGE_KEY:
@@ -357,17 +375,21 @@ class MonitorStateMixin(rx.State, mixin=True):
             self.is_loading = False
 
     async def refresh_status(self):
-        self.managed_polling_notice = "Refreshing selected controller once..."
-        await self.add_and_poll_m60()
-        self.managed_polling_notice = "Refreshed selected controller once."
+        async with self:
+            self.managed_polling_notice = "Refreshing selected controller once..."
+            await self.add_and_poll_m60()
+            self.managed_polling_notice = "Refreshed selected controller once."
 
     async def connect_and_start_polling(self):
         self.refresh_runtime_health()
         self.refresh_runtime_registry_status()
         self.managed_polling_notice = "Connecting and starting managed polling..."
+        if hasattr(self, "auto_refresh_enabled"):
+            self.auto_refresh_enabled = True
+        if hasattr(self, "auto_reconnect_enabled"):
+            self.auto_reconnect_enabled = True
         await self.connect_m60()
-        if self.is_online:
-            await self.start_selected_managed_polling()
-        else:
-            self.managed_polling_notice = "Controller connect failed; managed polling was not started."
-            self.refresh_runtime_registry_status()
+        started = await self.start_selected_managed_polling()
+        auto_refresh_handler = getattr(type(self), "auto_refresh_loop", None)
+        if started and getattr(auto_refresh_handler, "is_background", False):
+            return auto_refresh_handler()

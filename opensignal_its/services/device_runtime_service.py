@@ -73,6 +73,19 @@ class DeviceRuntimeService:
             "running_keys": running_keys,
         }
 
+    def retain_only(self, allowed_keys: set[str]) -> list[str]:
+        removed_keys: list[str] = []
+        for runtime_key, entry in list(self._entries.items()):
+            if runtime_key in allowed_keys:
+                continue
+            try:
+                entry.device.stop_polling()
+            except Exception:
+                pass
+            removed_keys.append(runtime_key)
+            del self._entries[runtime_key]
+        return removed_keys
+
     def clear(self):
         for entry in self._entries.values():
             try:

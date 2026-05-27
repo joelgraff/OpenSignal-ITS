@@ -39,7 +39,7 @@ class PollingStateMixin(rx.State, mixin=True):
         self.runtime_registry_summary = adapted["runtime_registry_summary"]
         self.runtime_registry_rows = adapted["runtime_registry_rows"]
 
-    async def start_selected_managed_polling(self):
+    async def start_selected_managed_polling(self) -> bool:
         device_type, device_id, config = self._selected_device_target()
         ok, message = await PollingService.start_managed_polling(
             device_type=device_type,
@@ -55,6 +55,7 @@ class PollingStateMixin(rx.State, mixin=True):
             self.managed_polling_notice = message
         self.error = "" if ok else message
         self.refresh_runtime_registry_status()
+        return ok
 
     async def start_fleet_managed_polling(self):
         if not self._is_role_authorized({"admin"}):
@@ -102,6 +103,10 @@ class PollingStateMixin(rx.State, mixin=True):
             config=config,
             device_id=device_id,
         )
+        if hasattr(self, "auto_refresh_enabled"):
+            self.auto_refresh_enabled = False
+        if hasattr(self, "auto_reconnect_enabled"):
+            self.auto_reconnect_enabled = False
         self.managed_polling_notice = message
         self.error = "" if ok else message
         self.refresh_runtime_registry_status()

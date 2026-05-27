@@ -23,6 +23,19 @@ class FleetService:
     MAP_CREATE_STORAGE_KEY = "opensignal-map-create-controller"
 
     @staticmethod
+    def _normalize_bool(value: Any, default: bool = True) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        raw = str(value).strip().lower()
+        if raw in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        if raw in {"0", "false", "no", "off", "disabled"}:
+            return False
+        raise ValueError("polling_enabled must be a boolean value.")
+
+    @staticmethod
     def _primary_profile_label(profile: dict[str, Any]) -> str:
         device_id = str(profile.get("device_id", "")).strip()
         return (
@@ -108,6 +121,7 @@ class FleetService:
             "location_name": str(item.get("location_name", "")).strip(),
             "latitude": latitude,
             "longitude": longitude,
+            "polling_enabled": FleetService._normalize_bool(item.get("polling_enabled", True)),
         }
 
     @staticmethod
@@ -143,6 +157,7 @@ class FleetService:
         retries_text: str,
         latitude_text: str = "",
         longitude_text: str = "",
+        polling_enabled: bool = True,
     ) -> dict[str, Any]:
         try:
             port = int(port_text)
@@ -200,6 +215,7 @@ class FleetService:
                 "retries": retries,
                 "latitude": latitude,
                 "longitude": longitude,
+                "polling_enabled": bool(polling_enabled),
             }
         )
 
@@ -240,9 +256,10 @@ class FleetService:
         normalized = FleetService.normalize_profile(profile)
         name = str(normalized.get("name", normalized["device_id"])).strip()
         name_suffix = "" if name == normalized["device_id"] else f" | {name}"
+        polling_suffix = " | polling on" if bool(normalized.get("polling_enabled", True)) else " | polling off"
         return (
             f"{normalized['device_id']} | {normalized['ip_address']}"
-            f" | {normalized['device_type']}{name_suffix}"
+            f" | {normalized['device_type']}{name_suffix}{polling_suffix}"
         )
 
     @staticmethod
@@ -259,6 +276,9 @@ class FleetService:
             normalized = FleetService.normalize_profile(profile)
             device_id = normalized["device_id"]
             status_payload = dict(status_map.get(device_id, {}))
+            polling_enabled = bool(normalized.get("polling_enabled", True))
+            polling_label = "Polling On" if polling_enabled else "Polling Off"
+            polling_scheme = "green" if polling_enabled else "gray"
             if "is_online" not in status_payload:
                 status_label = "Unknown"
                 status_scheme = "gray"
@@ -283,13 +303,19 @@ class FleetService:
                     "subtitle": subtitle,
                     "status_label": status_label,
                     "status_scheme": status_scheme,
+                    "polling_label": polling_label,
+                    "polling_scheme": polling_scheme,
                     "mapping_label": "Mapped" if has_coordinates else "Needs Coordinates",
                     "mapping_scheme": "blue" if has_coordinates else "amber",
                     "coordinate_text": FleetService._coordinate_text(normalized),
-                    "detail_text": str(
-                        status_payload.get(
-                            "status_text",
-                            "No poll data yet." if status_label == "Unknown" else "No status detail.",
+                    "detail_text": (
+                        "Polling disabled"
+                        if not polling_enabled
+                        else str(
+                            status_payload.get(
+                                "status_text",
+                                "No poll data yet." if status_label == "Unknown" else "No status detail.",
+                            )
                         )
                     ),
                     "updated_text": FleetService.format_status_timestamp(
@@ -371,6 +397,7 @@ class FleetService:
 
             device_id = normalized["device_id"]
             status_payload = dict(status_map.get(device_id, {}))
+            polling_enabled = bool(normalized.get("polling_enabled", True))
             if "is_online" not in status_payload:
                 status_label = "Unknown"
                 marker_color = "#64748b"
@@ -403,11 +430,13 @@ class FleetService:
                     "label": label,
                     "subtitle": f"{device_id} | {normalized['ip_address']}",
                     "status_label": status_label,
-                    "status_text": detail_text,
+                    "status_text": "Polling disabled" if not polling_enabled else detail_text,
                     "updated_text": updated_text,
                     "latitude": float(latitude),
                     "longitude": float(longitude),
                     "is_selected": is_selected,
+                    "polling_label": "Polling On" if polling_enabled else "Polling Off",
+                    "polling_scheme": "green" if polling_enabled else "gray",
                     "marker_color": "#4338ca" if is_selected else marker_color,
                     "marker_size": 18 if is_selected else 12,
                 }

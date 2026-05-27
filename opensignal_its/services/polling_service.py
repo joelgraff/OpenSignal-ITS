@@ -1,12 +1,19 @@
 """Polling orchestration services."""
 
+from datetime import datetime, timezone
+
 from ..devices.siemens_m60 import SiemensM60
-from ..models.device import DeviceConfig
+from ..models.device import DeviceConfig, DeviceStatus
 from .device_runtime_service import RUNTIME
 
 
 class PollingService:
     """Collect status snapshots from devices."""
+
+    @staticmethod
+    def _stamp_status(status: DeviceStatus) -> DeviceStatus:
+        status.timestamp = datetime.now(timezone.utc)
+        return status
 
     @staticmethod
     async def collect_connection_status(
@@ -16,6 +23,7 @@ class PollingService:
     ) -> tuple[dict, int]:
         _runtime_key, device = RUNTIME.get_or_create(device_type, config, device_id=device_id)
         await device.connect()
+        PollingService._stamp_status(device.status)
         mp_model = getattr(device, "_mp_model", 1)
         return device.status.model_dump(mode="json"), mp_model
 
@@ -28,15 +36,29 @@ class PollingService:
         _runtime_key, device = RUNTIME.get_or_create(device_type, config, device_id=device_id)
         success = await device.connect()
         if success:
-            status_payload = (await device.poll()).model_dump(mode="json")
+            device.status = PollingService._stamp_status(await device.poll())
         else:
-            status_payload = device.status.model_dump(mode="json")
+            device.status = PollingService._stamp_status(device.status)
+        status_payload = device.status.model_dump(mode="json")
         mp_model = getattr(device, "_mp_model", 1)
         return status_payload, mp_model
 
     @staticmethod
     def runtime_status() -> dict[str, object]:
         return RUNTIME.status()
+
+    @staticmethod
+    def sync_runtime_registry(profiles: list[dict]) -> list[str]:
+        allowed_keys: set[str] = set()
+        for profile in profiles:
+            device_id = str(profile.get("device_id", "")).strip()
+            if not device_id:
+                continue
+            device_type = str(profile.get("device_type", SiemensM60.device_type)).strip().lower()
+            if not device_type:
+                device_type = SiemensM60.device_type
+            allowed_keys.add(f"{device_type}::{device_id}")
+        return RUNTIME.retain_only(allowed_keys)
 
     @staticmethod
     def reset_runtime() -> None:

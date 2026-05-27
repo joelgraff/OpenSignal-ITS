@@ -84,6 +84,12 @@ def _controller_profile_roster() -> rx.Component:
                                         size="1",
                                     ),
                                     rx.badge(
+                                        row["polling_label"],
+                                        color_scheme=row["polling_scheme"],
+                                        size="1",
+                                        variant="soft",
+                                    ),
+                                    rx.badge(
                                         row["mapping_label"],
                                         color_scheme=row["mapping_scheme"],
                                         size="1",
@@ -240,8 +246,14 @@ def _controller_profile_form() -> rx.Component:
                 spacing="2",
                 width="100%",
             ),
+            rx.checkbox(
+                "Active polling",
+                checked=TrafficState.controller_profile_form_polling_enabled,
+                on_change=TrafficState.update_controller_profile_form_polling_enabled,
+                size="2",
+            ),
             rx.text(
-                "Coordinates are optional for now, but controllers need both latitude and longitude to appear on the map.",
+                "Coordinates are optional for now, but controllers need both latitude and longitude to appear on the map. Uncheck active polling to pause background updates for this controller.",
                 size="1",
                 color="gray",
             ),

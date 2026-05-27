@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from datetime import datetime, timezone
 from tempfile import TemporaryDirectory
 from pathlib import Path
 
@@ -7,6 +8,7 @@ from opensignal_its.devices.base import Device
 from opensignal_its.models.device import DeviceConfig, DeviceStatus
 from opensignal_its.db.audit_store import AuditStore
 from opensignal_its.services.command_service import CommandService
+from opensignal_its.services.device_runtime_service import DeviceRuntimeService, _RuntimeEntry
 from opensignal_its.services.polling_service import PollingService
 
 
@@ -14,11 +16,13 @@ class _FakeRegistryDevice(Device):
     device_type = "fake_registry"
 
     async def connect(self) -> bool:
+        self.status.timestamp = datetime(2000, 1, 1, tzinfo=timezone.utc)
         self.status.is_online = True
         self.status.status_text = "connected"
         return True
 
     async def poll(self) -> DeviceStatus:
+        self.status.timestamp = datetime(2000, 1, 1, tzinfo=timezone.utc)
         self.status.is_online = True
         self.status.status_text = "polled"
         self.status.raw_data = {
@@ -37,6 +41,14 @@ class _FakeRegistryDevice(Device):
         return False
 
 
+class _StopTrackingDevice:
+    def __init__(self):
+        self.stopped = False
+
+    def stop_polling(self):
+        self.stopped = True
+
+
 class RegistryServicesTests(unittest.TestCase):
     def setUp(self):
         PollingService.reset_runtime()
@@ -53,6 +65,7 @@ class RegistryServicesTests(unittest.TestCase):
 
         self.assertTrue(payload["is_online"])
         self.assertEqual("polled", payload["status_text"])
+        self.assertFalse(str(payload["timestamp"]).startswith("2000-01-01T00:00:00"))
         self.assertEqual(1, mp_model)
 
     def test_polling_service_collect_connection_status_uses_connect_only(self):
@@ -64,6 +77,7 @@ class RegistryServicesTests(unittest.TestCase):
 
         self.assertTrue(payload["is_online"])
         self.assertEqual("connected", payload["status_text"])
+        self.assertFalse(str(payload["timestamp"]).startswith("2000-01-01T00:00:00"))
         self.assertEqual(1, mp_model)
 
     def test_command_service_execute_command_uses_registry(self):
@@ -115,6 +129,32 @@ class RegistryServicesTests(unittest.TestCase):
         first_id = first_payload.get("raw_data", {}).get("instance_id")
         second_id = second_payload.get("raw_data", {}).get("instance_id")
         self.assertEqual(first_id, second_id)
+
+    def test_runtime_registry_prunes_stale_entries(self):
+        registry = DeviceRuntimeService()
+        keep_device = _StopTrackingDevice()
+        drop_device = _StopTrackingDevice()
+        registry._entries = {
+            "siemens_m60::keep": _RuntimeEntry(
+                device_type="siemens_m60",
+                device_id="keep",
+                config=DeviceConfig(ip_address="10.0.0.1", name="Keep"),
+                device=keep_device,
+            ),
+            "siemens_m60::drop": _RuntimeEntry(
+                device_type="siemens_m60",
+                device_id="drop",
+                config=DeviceConfig(ip_address="10.0.0.2", name="Drop"),
+                device=drop_device,
+            ),
+        }
+
+        removed = registry.retain_only({"siemens_m60::keep"})
+
+        self.assertEqual(["siemens_m60::drop"], removed)
+        self.assertTrue(drop_device.stopped)
+        self.assertFalse(keep_device.stopped)
+        self.assertEqual(["siemens_m60::keep"], list(registry._entries.keys()))
 
     def test_managed_polling_lifecycle(self):
         config = DeviceConfig(ip_address="10.0.0.1", name="Fake")
