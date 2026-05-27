@@ -68,10 +68,21 @@ class Device(ABC):
 
     async def start_polling(self, interval_seconds: int = 5):
         """Background polling."""
+        from ..polling_telemetry import POLLING_TELEMETRY
+
+        runtime_key = getattr(self, "_runtime_key", "") or (
+            f"{self.__class__.device_type or self.__class__.__name__.lower()}::{self.status.device_id}"
+        )
+
         async def poll_loop():
             while True:
                 try:
-                    self.status = await self.poll()
+                    async with POLLING_TELEMETRY.observe(
+                        runtime_key,
+                        "Device.start_polling",
+                        track_overlap=True,
+                    ):
+                        self.status = await self.poll()
                 except Exception as e:
                     self.status.errors.append(str(e))
                 await asyncio.sleep(interval_seconds)

@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from .base import Device
 from ..models.device import DeviceStatus, DeviceConfig
+from ..polling_telemetry import POLLING_TELEMETRY
 from ..protocols.snmp import SNMPClient
 
 
@@ -232,216 +233,224 @@ class SiemensM60(Device):
 
     async def poll(self) -> DeviceStatus:
         """Poll known-good OIDs and return structured status for UI."""
-        try:
-            self.status.errors = []
-            target = await self._snmp.create_target()
+        runtime_key = getattr(self, "_runtime_key", "") or (
+            f"{self.device_type or self.__class__.__name__.lower()}::{self.status.device_id}"
+        )
+        async with POLLING_TELEMETRY.observe(
+            runtime_key,
+            "SiemensM60.poll",
+            track_overlap=False,
+        ):
+            try:
+                self.status.errors = []
+                target = await self._snmp.create_target()
 
-            sys_descr = await self._safe_get_oid(target, OID_SYS_DESCR)
-            current_pattern_raw = await self._safe_get_oid(target, OID_CURRENT_PATTERN)
-            unit_status_raw = await self._safe_get_oid(target, OID_UNIT_STATUS)
+                sys_descr = await self._safe_get_oid(target, OID_SYS_DESCR)
+                current_pattern_raw = await self._safe_get_oid(target, OID_CURRENT_PATTERN)
+                unit_status_raw = await self._safe_get_oid(target, OID_UNIT_STATUS)
 
-            ring_status: dict[str, dict[str, Any]] = {}
-            ring_state_parts: list[str] = []
-            for ring in (1, 2):
-                ring_oid = (
-                    OID_RING_STATUS_TEMPLATE.format(ring=ring)
-                    if "{ring}" in OID_RING_STATUS_TEMPLATE
-                    else OID_RING_STATUS_TEMPLATE
-                )
-                ring_raw = self._to_int(await self._safe_get_oid(target, ring_oid))
-                decoded = self._decode_ring_status(ring_raw)
-                ring_status[str(ring)] = decoded
-                ring_state_parts.append(f"R{ring}:{decoded['state_name']}")
+                ring_status: dict[str, dict[str, Any]] = {}
+                ring_state_parts: list[str] = []
+                for ring in (1, 2):
+                    ring_oid = (
+                        OID_RING_STATUS_TEMPLATE.format(ring=ring)
+                        if "{ring}" in OID_RING_STATUS_TEMPLATE
+                        else OID_RING_STATUS_TEMPLATE
+                    )
+                    ring_raw = self._to_int(await self._safe_get_oid(target, ring_oid))
+                    decoded = self._decode_ring_status(ring_raw)
+                    ring_status[str(ring)] = decoded
+                    ring_state_parts.append(f"R{ring}:{decoded['state_name']}")
 
-            ntcip_greens: set[int] = set()
-            ntcip_reds: set[int] = set()
-            ntcip_veh_calls: set[int] = set()
-            ntcip_ped_calls: set[int] = set()
-            has_ntcip_greens = False
-            has_ntcip_reds = False
-            has_ntcip_veh_calls = False
-            has_ntcip_ped_calls = False
-            ntcip_masks: dict[str, dict[str, int | None]] = {
-                "greens": {},
-                "reds": {},
-                "veh_calls": {},
-                "ped_calls": {},
-            }
-
-            for group in (1, 2):
-                green_mask = await self._read_group_mask(target, OID_PHASE_GREENS_GROUP_TEMPLATE, group)
-                red_mask = await self._read_group_mask(target, OID_PHASE_REDS_GROUP_TEMPLATE, group)
-                veh_mask = await self._read_group_mask(target, OID_PHASE_VEH_CALL_GROUP_TEMPLATE, group)
-                ped_mask = await self._read_group_mask(target, OID_PHASE_PED_CALL_GROUP_TEMPLATE, group)
-
-                ntcip_masks["greens"][str(group)] = green_mask
-                ntcip_masks["reds"][str(group)] = red_mask
-                ntcip_masks["veh_calls"][str(group)] = veh_mask
-                ntcip_masks["ped_calls"][str(group)] = ped_mask
-
-                if green_mask is not None:
-                    has_ntcip_greens = True
-                    ntcip_greens |= self._decode_phase_group_bits(green_mask, group)
-                if red_mask is not None:
-                    has_ntcip_reds = True
-                    ntcip_reds |= self._decode_phase_group_bits(red_mask, group)
-                if veh_mask is not None:
-                    has_ntcip_veh_calls = True
-                    ntcip_veh_calls |= self._decode_phase_group_bits(veh_mask, group)
-                if ped_mask is not None:
-                    has_ntcip_ped_calls = True
-                    ntcip_ped_calls |= self._decode_phase_group_bits(ped_mask, group)
-
-            phases: dict[str, dict[str, Any]] = {}
-            raw_phase_status: dict[str, int] = {}
-            active_vehicle_calls: list[int] = []
-            active_ped_calls: list[int] = []
-            green_phases: list[int] = []
-            yellow_phases: list[int] = []
-            red_phases: list[int] = []
-            time_remaining: dict[str, int] = {}
-            phase_max_green_1: dict[str, int] = {}
-
-            for phase in range(1, 17):
-                status_oid = OID_PHASE_STATUS_TEMPLATE.format(phase=phase)
-                veh_call_oid = OID_VEH_CALL_TEMPLATE.format(phase=phase)
-                ped_call_oid = OID_PED_CALL_TEMPLATE.format(phase=phase)
-                timer_oid = OID_TIME_REMAINING_TEMPLATE.format(phase=phase)
-                max_green_1_oid = OID_PHASE_MAX_GREEN_1_TEMPLATE.format(phase=phase)
-
-                status_val = self._to_int(await self._safe_get_oid(target, status_oid))
-                if status_val is None:
-                    status_oid = OID_PHASE_STATUS_TEMPLATE_REF.format(phase=phase)
-                    status_val = self._to_int(await self._safe_get_oid(target, status_oid))
-
-                veh_call_val = self._to_int(await self._safe_get_oid(target, veh_call_oid))
-                if veh_call_val is None:
-                    veh_call_oid = OID_VEH_CALL_TEMPLATE_REF.format(phase=phase)
-                    veh_call_val = self._to_int(await self._safe_get_oid(target, veh_call_oid))
-
-                ped_call_val = self._to_int(await self._safe_get_oid(target, ped_call_oid))
-                if ped_call_val is None:
-                    ped_call_oid = OID_PED_CALL_TEMPLATE_REF.format(phase=phase)
-                    ped_call_val = self._to_int(await self._safe_get_oid(target, ped_call_oid))
-
-                timer_val = self._to_int(await self._safe_get_oid(target, timer_oid))
-                if timer_val is None:
-                    timer_oid = OID_TIME_REMAINING_TEMPLATE_REF.format(phase=phase)
-                    timer_val = self._to_int(await self._safe_get_oid(target, timer_oid))
-
-                max_green_1_val = self._to_int(await self._safe_get_oid(target, max_green_1_oid))
-
-                status_val = status_val or 0
-                veh_call_val = veh_call_val or 0
-                ped_call_val = ped_call_val or 0
-                timer_val = timer_val or 0
-                max_green_1_val = max_green_1_val or 0
-
-                is_green = bool(status_val & 0b0001)
-                is_yellow = bool(status_val & 0b0010)
-                is_red = bool(status_val & 0b0100)
-                has_veh_call = veh_call_val != 0
-                has_ped_call = ped_call_val != 0
-
-                if has_ntcip_greens:
-                    is_green = phase in ntcip_greens
-                if has_ntcip_reds:
-                    is_red = phase in ntcip_reds
-                if has_ntcip_veh_calls:
-                    has_veh_call = phase in ntcip_veh_calls
-                if has_ntcip_ped_calls:
-                    has_ped_call = phase in ntcip_ped_calls
-
-                if is_green:
-                    green_phases.append(phase)
-                if is_yellow:
-                    yellow_phases.append(phase)
-                if is_red:
-                    red_phases.append(phase)
-                if has_veh_call:
-                    active_vehicle_calls.append(phase)
-                if has_ped_call:
-                    active_ped_calls.append(phase)
-
-                phase_key = str(phase)
-                raw_phase_status[phase_key] = status_val
-                time_remaining[phase_key] = timer_val
-                phase_max_green_1[phase_key] = max_green_1_val
-                phases[phase_key] = {
-                    "green": is_green,
-                    "yellow": is_yellow,
-                    "red": is_red,
-                    "vehicle_call": has_veh_call,
-                    "ped_call": has_ped_call,
-                    "time_remaining": timer_val,
-                    "max_green_1": max_green_1_val,
-                    "raw_status": status_val,
+                ntcip_greens: set[int] = set()
+                ntcip_reds: set[int] = set()
+                ntcip_veh_calls: set[int] = set()
+                ntcip_ped_calls: set[int] = set()
+                has_ntcip_greens = False
+                has_ntcip_reds = False
+                has_ntcip_veh_calls = False
+                has_ntcip_ped_calls = False
+                ntcip_masks: dict[str, dict[str, int | None]] = {
+                    "greens": {},
+                    "reds": {},
+                    "veh_calls": {},
+                    "ped_calls": {},
                 }
 
-            current_pattern = self._to_int(current_pattern_raw)
-            unit_status_code = self._to_int(unit_status_raw)
-            phase_summary = {
-                "green": green_phases,
-                "yellow": yellow_phases,
-                "red": red_phases,
-                "vehicle_calls": active_vehicle_calls,
-                "ped_calls": active_ped_calls,
-            }
+                for group in (1, 2):
+                    green_mask = await self._read_group_mask(target, OID_PHASE_GREENS_GROUP_TEMPLATE, group)
+                    red_mask = await self._read_group_mask(target, OID_PHASE_REDS_GROUP_TEMPLATE, group)
+                    veh_mask = await self._read_group_mask(target, OID_PHASE_VEH_CALL_GROUP_TEMPLATE, group)
+                    ped_mask = await self._read_group_mask(target, OID_PHASE_PED_CALL_GROUP_TEMPLATE, group)
 
-            self.status.extra = {
-                "current_pattern": current_pattern or 0,
-                "unit_status": unit_status_code or 0,
-                "phases": phases,
-                "timers": time_remaining,
-                "phase_max_green_1": phase_max_green_1,
-                "phase_summary": phase_summary,
-                "ring_status": ring_status,
-                "ring_status_summary": ", ".join(ring_state_parts) if ring_state_parts else "none",
-                "ntcip_phase_group_masks": ntcip_masks,
-            }
+                    ntcip_masks["greens"][str(group)] = green_mask
+                    ntcip_masks["reds"][str(group)] = red_mask
+                    ntcip_masks["veh_calls"][str(group)] = veh_mask
+                    ntcip_masks["ped_calls"][str(group)] = ped_mask
 
-            self.status.raw_data = {
-                "sys_descr": sys_descr or "unavailable",
-                "current_pattern": str(current_pattern) if current_pattern is not None else "Unknown",
-                "unit_status_code": unit_status_code,
-                "unit_status": self._unit_status_text(unit_status_code),
-                "phase_status": raw_phase_status,
-                "green_phases": ", ".join(str(p) for p in green_phases) if green_phases else "none",
-                "yellow_phases": ", ".join(str(p) for p in yellow_phases) if yellow_phases else "none",
-                "red_phases": ", ".join(str(p) for p in red_phases) if red_phases else "none",
-                "vehicle_calls": ", ".join(str(p) for p in active_vehicle_calls) if active_vehicle_calls else "none",
-                "ped_calls": ", ".join(str(p) for p in active_ped_calls) if active_ped_calls else "none",
-                "time_remaining": time_remaining,
-                "phase_max_green_1": phase_max_green_1,
-                "ring_status": ring_status,
-                "ring_status_summary": ", ".join(ring_state_parts) if ring_state_parts else "none",
-                "ntcip_phase_group_masks": ntcip_masks,
-            }
+                    if green_mask is not None:
+                        has_ntcip_greens = True
+                        ntcip_greens |= self._decode_phase_group_bits(green_mask, group)
+                    if red_mask is not None:
+                        has_ntcip_reds = True
+                        ntcip_reds |= self._decode_phase_group_bits(red_mask, group)
+                    if veh_mask is not None:
+                        has_ntcip_veh_calls = True
+                        ntcip_veh_calls |= self._decode_phase_group_bits(veh_mask, group)
+                    if ped_mask is not None:
+                        has_ntcip_ped_calls = True
+                        ntcip_ped_calls |= self._decode_phase_group_bits(ped_mask, group)
 
-            if current_pattern is None and unit_status_code is None and sys_descr is None:
-                self.status.is_online = False
-                self.status.status_text = "SNMPv1 poll failed"
-                self.status.errors.append("No values returned from known-good OIDs")
+                phases: dict[str, dict[str, Any]] = {}
+                raw_phase_status: dict[str, int] = {}
+                active_vehicle_calls: list[int] = []
+                active_ped_calls: list[int] = []
+                green_phases: list[int] = []
+                yellow_phases: list[int] = []
+                red_phases: list[int] = []
+                time_remaining: dict[str, int] = {}
+                phase_max_green_1: dict[str, int] = {}
+
+                for phase in range(1, 17):
+                    status_oid = OID_PHASE_STATUS_TEMPLATE.format(phase=phase)
+                    veh_call_oid = OID_VEH_CALL_TEMPLATE.format(phase=phase)
+                    ped_call_oid = OID_PED_CALL_TEMPLATE.format(phase=phase)
+                    timer_oid = OID_TIME_REMAINING_TEMPLATE.format(phase=phase)
+                    max_green_1_oid = OID_PHASE_MAX_GREEN_1_TEMPLATE.format(phase=phase)
+
+                    status_val = self._to_int(await self._safe_get_oid(target, status_oid))
+                    if status_val is None:
+                        status_oid = OID_PHASE_STATUS_TEMPLATE_REF.format(phase=phase)
+                        status_val = self._to_int(await self._safe_get_oid(target, status_oid))
+
+                    veh_call_val = self._to_int(await self._safe_get_oid(target, veh_call_oid))
+                    if veh_call_val is None:
+                        veh_call_oid = OID_VEH_CALL_TEMPLATE_REF.format(phase=phase)
+                        veh_call_val = self._to_int(await self._safe_get_oid(target, veh_call_oid))
+
+                    ped_call_val = self._to_int(await self._safe_get_oid(target, ped_call_oid))
+                    if ped_call_val is None:
+                        ped_call_oid = OID_PED_CALL_TEMPLATE_REF.format(phase=phase)
+                        ped_call_val = self._to_int(await self._safe_get_oid(target, ped_call_oid))
+
+                    timer_val = self._to_int(await self._safe_get_oid(target, timer_oid))
+                    if timer_val is None:
+                        timer_oid = OID_TIME_REMAINING_TEMPLATE_REF.format(phase=phase)
+                        timer_val = self._to_int(await self._safe_get_oid(target, timer_oid))
+
+                    max_green_1_val = self._to_int(await self._safe_get_oid(target, max_green_1_oid))
+
+                    status_val = status_val or 0
+                    veh_call_val = veh_call_val or 0
+                    ped_call_val = ped_call_val or 0
+                    timer_val = timer_val or 0
+                    max_green_1_val = max_green_1_val or 0
+
+                    is_green = bool(status_val & 0b0001)
+                    is_yellow = bool(status_val & 0b0010)
+                    is_red = bool(status_val & 0b0100)
+                    has_veh_call = veh_call_val != 0
+                    has_ped_call = ped_call_val != 0
+
+                    if has_ntcip_greens:
+                        is_green = phase in ntcip_greens
+                    if has_ntcip_reds:
+                        is_red = phase in ntcip_reds
+                    if has_ntcip_veh_calls:
+                        has_veh_call = phase in ntcip_veh_calls
+                    if has_ntcip_ped_calls:
+                        has_ped_call = phase in ntcip_ped_calls
+
+                    if is_green:
+                        green_phases.append(phase)
+                    if is_yellow:
+                        yellow_phases.append(phase)
+                    if is_red:
+                        red_phases.append(phase)
+                    if has_veh_call:
+                        active_vehicle_calls.append(phase)
+                    if has_ped_call:
+                        active_ped_calls.append(phase)
+
+                    phase_key = str(phase)
+                    raw_phase_status[phase_key] = status_val
+                    time_remaining[phase_key] = timer_val
+                    phase_max_green_1[phase_key] = max_green_1_val
+                    phases[phase_key] = {
+                        "green": is_green,
+                        "yellow": is_yellow,
+                        "red": is_red,
+                        "vehicle_call": has_veh_call,
+                        "ped_call": has_ped_call,
+                        "time_remaining": timer_val,
+                        "max_green_1": max_green_1_val,
+                        "raw_status": status_val,
+                    }
+
+                current_pattern = self._to_int(current_pattern_raw)
+                unit_status_code = self._to_int(unit_status_raw)
+                phase_summary = {
+                    "green": green_phases,
+                    "yellow": yellow_phases,
+                    "red": red_phases,
+                    "vehicle_calls": active_vehicle_calls,
+                    "ped_calls": active_ped_calls,
+                }
+
+                self.status.extra = {
+                    "current_pattern": current_pattern or 0,
+                    "unit_status": unit_status_code or 0,
+                    "phases": phases,
+                    "timers": time_remaining,
+                    "phase_max_green_1": phase_max_green_1,
+                    "phase_summary": phase_summary,
+                    "ring_status": ring_status,
+                    "ring_status_summary": ", ".join(ring_state_parts) if ring_state_parts else "none",
+                    "ntcip_phase_group_masks": ntcip_masks,
+                }
+
+                self.status.raw_data = {
+                    "sys_descr": sys_descr or "unavailable",
+                    "current_pattern": str(current_pattern) if current_pattern is not None else "Unknown",
+                    "unit_status_code": unit_status_code,
+                    "unit_status": self._unit_status_text(unit_status_code),
+                    "phase_status": raw_phase_status,
+                    "green_phases": ", ".join(str(p) for p in green_phases) if green_phases else "none",
+                    "yellow_phases": ", ".join(str(p) for p in yellow_phases) if yellow_phases else "none",
+                    "red_phases": ", ".join(str(p) for p in red_phases) if red_phases else "none",
+                    "vehicle_calls": ", ".join(str(p) for p in active_vehicle_calls) if active_vehicle_calls else "none",
+                    "ped_calls": ", ".join(str(p) for p in active_ped_calls) if active_ped_calls else "none",
+                    "time_remaining": time_remaining,
+                    "phase_max_green_1": phase_max_green_1,
+                    "ring_status": ring_status,
+                    "ring_status_summary": ", ".join(ring_state_parts) if ring_state_parts else "none",
+                    "ntcip_phase_group_masks": ntcip_masks,
+                }
+
+                if current_pattern is None and unit_status_code is None and sys_descr is None:
+                    self.status.is_online = False
+                    self.status.status_text = "SNMPv1 poll failed"
+                    self.status.errors.append("No values returned from known-good OIDs")
+                    return self.status
+
+                self.status.is_online = True
+                pattern_text = self.status.raw_data.get("current_pattern", "Unknown")
+                unit_text = self.status.raw_data.get("unit_status", "unknown")
+                self.status.status_text = f"Online - Pattern {pattern_text}, Unit {unit_text}"
+                logger.info(
+                    "SiemensM60 poll success ip=%s pattern=%s unit_status=%s",
+                    self.config.ip_address,
+                    pattern_text,
+                    unit_text,
+                )
                 return self.status
 
-            self.status.is_online = True
-            pattern_text = self.status.raw_data.get("current_pattern", "Unknown")
-            unit_text = self.status.raw_data.get("unit_status", "unknown")
-            self.status.status_text = f"Online - Pattern {pattern_text}, Unit {unit_text}"
-            logger.info(
-                "SiemensM60 poll success ip=%s pattern=%s unit_status=%s",
-                self.config.ip_address,
-                pattern_text,
-                unit_text,
-            )
-            return self.status
-
-        except Exception as e:
-            logger.exception("SiemensM60 poll exception ip=%s", self.config.ip_address)
-            self.status.errors.append(str(e))
-            self.status.is_online = False
-            self.status.status_text = "SNMPv1 poll exception"
-            return self.status
+            except Exception as e:
+                logger.exception("SiemensM60 poll exception ip=%s", self.config.ip_address)
+                self.status.errors.append(str(e))
+                self.status.is_online = False
+                self.status.status_text = "SNMPv1 poll exception"
+                return self.status
 
     async def command(self, command: str, params: Dict[str, Any]) -> bool:
         """Execute timing and control commands."""

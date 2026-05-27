@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from ..devices.siemens_m60 import SiemensM60
 from ..models.device import DeviceConfig, DeviceStatus
+from ..polling_telemetry import POLLING_TELEMETRY
 from .device_runtime_service import RUNTIME
 
 
@@ -14,6 +15,14 @@ class PollingService:
     def _stamp_status(status: DeviceStatus) -> DeviceStatus:
         status.timestamp = datetime.now(timezone.utc)
         return status
+
+    @staticmethod
+    def poll_telemetry(runtime_key: str | None = None) -> dict[str, object]:
+        return POLLING_TELEMETRY.snapshot(runtime_key)
+
+    @staticmethod
+    def reset_poll_telemetry() -> None:
+        POLLING_TELEMETRY.reset()
 
     @staticmethod
     async def collect_connection_status(
@@ -34,13 +43,20 @@ class PollingService:
         device_id: str = "",
     ) -> tuple[dict, int]:
         _runtime_key, device = RUNTIME.get_or_create(device_type, config, device_id=device_id)
-        success = await device.connect()
-        if success:
-            device.status = PollingService._stamp_status(await device.poll())
-        else:
-            device.status = PollingService._stamp_status(device.status)
-        status_payload = device.status.model_dump(mode="json")
-        mp_model = getattr(device, "_mp_model", 1)
+        status_payload: dict[str, object]
+        mp_model: int
+        async with POLLING_TELEMETRY.observe(
+            _runtime_key,
+            "PollingService.collect_snapshot",
+            track_overlap=True,
+        ):
+            success = await device.connect()
+            if success:
+                device.status = PollingService._stamp_status(await device.poll())
+            else:
+                device.status = PollingService._stamp_status(device.status)
+            status_payload = device.status.model_dump(mode="json")
+            mp_model = getattr(device, "_mp_model", 1)
         return status_payload, mp_model
 
     @staticmethod

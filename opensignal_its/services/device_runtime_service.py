@@ -40,9 +40,11 @@ class DeviceRuntimeService:
         runtime_key = self._runtime_key(device_type, device_id, config)
         existing = self._entries.get(runtime_key)
         if existing is not None:
+            setattr(existing.device, "_runtime_key", runtime_key)
             return runtime_key, existing.device
 
         device = Device.create(device_type, config)
+        setattr(device, "_runtime_key", runtime_key)
         self._entries[runtime_key] = _RuntimeEntry(
             device_type=device_type,
             device_id=device_id,
@@ -58,6 +60,8 @@ class DeviceRuntimeService:
     def get_existing(self, device_type: str, config: DeviceConfig, device_id: str = "") -> tuple[str, Device | None]:
         runtime_key = self._runtime_key(device_type, device_id, config)
         entry = self._entries.get(runtime_key)
+        if entry is not None:
+            setattr(entry.device, "_runtime_key", runtime_key)
         return runtime_key, (entry.device if entry is not None else None)
 
     def status(self) -> dict[str, Any]:
