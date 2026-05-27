@@ -277,6 +277,32 @@ class PollingTelemetryTests(unittest.TestCase):
         device._snmp = fake_client
         return device, fake_client
 
+    def _make_siemens_runtime_device(
+        self,
+        *,
+        device_id: str = "int-1",
+        include_sys_descr: bool = True,
+        include_vehicle_group_masks: bool = True,
+        include_ped_group_masks: bool = True,
+        raise_sys_descr: bool = False,
+        batch_fail_oids: set[str] | None = None,
+        batch_outcomes: dict[tuple[str, ...], tuple[list[str | None], str | None]] | None = None,
+    ) -> tuple[str, SiemensM60, _FakeSNMPClient, DeviceConfig]:
+        config = DeviceConfig(ip_address="10.0.0.1", name=device_id)
+        runtime_key, device = RUNTIME.get_or_create(SiemensM60.device_type, config, device_id=device_id)
+        fake_client = _FakeSNMPClient(
+            _build_siemens_values(
+                include_sys_descr=include_sys_descr,
+                include_vehicle_group_masks=include_vehicle_group_masks,
+                include_ped_group_masks=include_ped_group_masks,
+            ),
+            raise_oids={OID_SYS_DESCR} if raise_sys_descr else set(),
+            batch_fail_oids=batch_fail_oids,
+            batch_outcomes=batch_outcomes,
+        )
+        device._snmp = fake_client
+        return runtime_key, device, fake_client, config
+
     def test_collect_snapshot_records_overlap_while_background_poll_is_active(self):
         async def _scenario() -> dict[str, object]:
             entered_event = asyncio.Event()
@@ -536,6 +562,210 @@ class PollingTelemetryTests(unittest.TestCase):
 
         self.assertEqual(3, snapshot["scopes"]["PollingService.collect_snapshot"]["count"])
         self.assertFalse(snapshot["scopes"]["PollingService.collect_snapshot"]["last_overlap_detected"])
+
+    def test_collect_snapshot_backoff_skips_after_threshold_and_expires(self):
+        async def _scenario() -> tuple[dict[str, object], dict[str, object], _FakeSNMPClient, str, DeviceConfig]:
+            clock = {"now": 0.0}
+            with patch.object(PollingService, "_now_seconds", side_effect=lambda: clock["now"]):
+                runtime_key, _device, fake_client, config = self._make_siemens_runtime_device(
+                    device_id="backoff-1",
+                    include_sys_descr=False,
+                )
+                fake_client.values.pop(OID_CURRENT_PATTERN, None)
+
+                first = await PollingService.collect_snapshot(
+                    SiemensM60.device_type,
+                    config,
+                    device_id="backoff-1",
+                )
+                second = await PollingService.collect_snapshot(
+                    SiemensM60.device_type,
+                    config,
+                    device_id="backoff-1",
+                )
+                third = await PollingService.collect_snapshot(
+                    SiemensM60.device_type,
+                    config,
+                    device_id="backoff-1",
+                )
+
+                calls_before_skip = len(fake_client.calls)
+                batch_before_skip = len(fake_client.batch_calls)
+                skipped = await PollingService.collect_snapshot(
+                    SiemensM60.device_type,
+                    config,
+                    device_id="backoff-1",
+                )
+
+                self.assertEqual(calls_before_skip, len(fake_client.calls))
+                self.assertEqual(batch_before_skip, len(fake_client.batch_calls))
+
+                clock["now"] = 16.0
+                fake_client.values[OID_SYS_DESCR] = "Siemens M60"
+                fake_client.values[OID_CURRENT_PATTERN] = "7"
+
+                expired = await PollingService.collect_snapshot(
+                    SiemensM60.device_type,
+                    config,
+                    device_id="backoff-1",
+                )
+                post_success = await PollingService.collect_snapshot(
+                    SiemensM60.device_type,
+                    config,
+                    device_id="backoff-1",
+                )
+
+                return (
+                    first[0],
+                    second[0],
+                    third[0],
+                    skipped[0],
+                    expired[0],
+                    post_success[0],
+                    fake_client,
+                    runtime_key,
+                    config,
+                )
+
+        first, second, third, skipped, expired, post_success, fake_client, runtime_key, config = asyncio.run(_scenario())
+
+        self.assertNotIn("poll_backoff", first["extra"])
+        self.assertNotIn("poll_backoff", second["extra"])
+        self.assertTrue(third["extra"]["poll_backoff"]["active"])
+        self.assertFalse(third["extra"]["poll_backoff"]["skipped"])
+        self.assertEqual(3, third["extra"]["poll_backoff"]["failure_streak"])
+        self.assertEqual(15.0, third["extra"]["poll_backoff"]["next_retry_at"])
+
+        self.assertTrue(skipped["extra"]["poll_backoff"]["active"])
+        self.assertTrue(skipped["extra"]["poll_backoff"]["skipped"])
+        self.assertTrue(skipped["extra"]["poll_backoff"]["stale"])
+        self.assertEqual(3, skipped["extra"]["poll_backoff"]["failure_streak"])
+
+        self.assertTrue(expired["is_online"])
+        self.assertNotIn("poll_backoff", expired.get("extra", {}))
+        self.assertTrue(post_success["is_online"])
+        self.assertNotIn("poll_backoff", post_success.get("extra", {}))
+
+        snapshot = PollingService.poll_telemetry(runtime_key)
+        self.assertEqual(6, snapshot["scopes"]["PollingService.collect_snapshot"]["count"])
+        self.assertGreaterEqual(len(fake_client.batch_calls), 5)
+
+    def test_collect_snapshot_backoff_state_is_runtime_key_specific_and_resettable(self):
+        async def _scenario() -> tuple[dict[str, object], dict[str, object], dict[str, object], _FakeSNMPClient, _FakeSNMPClient, str, DeviceConfig, DeviceConfig]:
+            clock = {"now": 0.0}
+            with patch.object(PollingService, "_now_seconds", side_effect=lambda: clock["now"]):
+                runtime_key_one, _device_one, client_one, config_one = self._make_siemens_runtime_device(
+                    device_id="backoff-key-1",
+                    include_sys_descr=False,
+                )
+                client_one.values.pop(OID_CURRENT_PATTERN, None)
+
+                runtime_key_two, _device_two, client_two, config_two = self._make_siemens_runtime_device(
+                    device_id="backoff-key-2",
+                    include_sys_descr=True,
+                )
+
+                for _ in range(3):
+                    await PollingService.collect_snapshot(
+                        SiemensM60.device_type,
+                        config_one,
+                        device_id="backoff-key-1",
+                    )
+
+                key_two_result = await PollingService.collect_snapshot(
+                    SiemensM60.device_type,
+                    config_two,
+                    device_id="backoff-key-2",
+                )
+
+                calls_before_reset = len(client_one.calls)
+                PollingService.reset_runtime()
+
+                runtime_key_one_reset, _device_one_reset, client_one_reset, config_one_reset = self._make_siemens_runtime_device(
+                    device_id="backoff-key-1",
+                    include_sys_descr=False,
+                )
+                client_one_reset.values.pop(OID_CURRENT_PATTERN, None)
+
+                reset_result = await PollingService.collect_snapshot(
+                    SiemensM60.device_type,
+                    config_one_reset,
+                    device_id="backoff-key-1",
+                )
+
+                return (
+                    key_two_result[0],
+                    reset_result[0],
+                    client_one,
+                    client_two,
+                    client_one_reset,
+                    runtime_key_two,
+                    runtime_key_one_reset,
+                    config_two,
+                    config_one_reset,
+                    calls_before_reset,
+                )
+
+        key_two_result, reset_result, client_one, client_two, client_one_reset, runtime_key_two, runtime_key_one_reset, config_two, config_one_reset, calls_before_reset = asyncio.run(_scenario())
+
+        self.assertTrue(key_two_result["is_online"])
+        self.assertNotIn("poll_backoff", key_two_result.get("extra", {}))
+        self.assertGreater(len(client_two.calls), 0)
+
+        self.assertFalse(reset_result["is_online"])
+        self.assertNotIn("poll_backoff", reset_result.get("extra", {}))
+        self.assertGreater(len(client_one_reset.calls), 0)
+        self.assertGreater(len(client_one_reset.batch_calls), 0)
+
+        snapshot_two = PollingService.poll_telemetry(runtime_key_two)
+        snapshot_one_reset = PollingService.poll_telemetry(runtime_key_one_reset)
+        self.assertEqual(1, snapshot_two["scopes"]["PollingService.collect_snapshot"]["count"])
+        self.assertEqual(4, snapshot_one_reset["scopes"]["PollingService.collect_snapshot"]["count"])
+
+    def test_collect_snapshot_success_resets_backoff_after_failure(self):
+        async def _scenario() -> tuple[dict[str, object], dict[str, object], _FakeSNMPClient, str]:
+            clock = {"now": 0.0}
+            with patch.object(PollingService, "_now_seconds", side_effect=lambda: clock["now"]):
+                runtime_key, _device, fake_client, config = self._make_siemens_runtime_device(
+                    device_id="backoff-reset",
+                    include_sys_descr=False,
+                )
+                fake_client.values.pop(OID_CURRENT_PATTERN, None)
+
+                for _ in range(3):
+                    await PollingService.collect_snapshot(
+                        SiemensM60.device_type,
+                        config,
+                        device_id="backoff-reset",
+                    )
+
+                clock["now"] = 16.0
+                fake_client.values[OID_SYS_DESCR] = "Siemens M60"
+                fake_client.values[OID_CURRENT_PATTERN] = "7"
+
+                success_result = await PollingService.collect_snapshot(
+                    SiemensM60.device_type,
+                    config,
+                    device_id="backoff-reset",
+                )
+                followup_result = await PollingService.collect_snapshot(
+                    SiemensM60.device_type,
+                    config,
+                    device_id="backoff-reset",
+                )
+
+                return success_result[0], followup_result[0], fake_client, runtime_key
+
+        success_result, followup_result, fake_client, runtime_key = asyncio.run(_scenario())
+
+        self.assertTrue(success_result["is_online"])
+        self.assertNotIn("poll_backoff", success_result.get("extra", {}))
+        self.assertTrue(followup_result["is_online"])
+        self.assertNotIn("poll_backoff", followup_result.get("extra", {}))
+        self.assertGreater(len(fake_client.calls), 0)
+
+        snapshot = PollingService.poll_telemetry(runtime_key)
+        self.assertEqual(5, snapshot["scopes"]["PollingService.collect_snapshot"]["count"])
 
     def test_refresh_fleet_status_records_fleet_boundary_timing(self):
         class _FleetTelemetryProbe(FleetStateMixin, rx.State):

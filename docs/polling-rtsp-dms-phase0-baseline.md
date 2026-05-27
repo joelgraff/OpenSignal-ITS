@@ -112,3 +112,10 @@ Overlapping `PollingService.collect_snapshot` calls for the same runtime key now
 - Coalescing scope: per runtime key, limited to `PollingService.collect_snapshot`.
 - Same-key overlap telemetry still records both refresh calls, but only one underlying device connect/poll cycle runs and both callers receive the same payload/mp_model result.
 - Sequential same-key calls and different runtime keys still run independently, so warm-path counts remain unchanged outside overlap.
+
+### Phase 2g Note
+
+Repeated offline or error snapshot results now enter a conservative runtime-key backoff after three consecutive failures. The initial backoff window is 15 seconds, it doubles on later real failures, and it is capped at 60 seconds.
+
+- Backoff-skip responses reuse the last known payload and add `extra.poll_backoff` metadata with `active`, `skipped`, `failure_streak`, `next_retry_at`, and `stale` fields so stale state is explicit without starting new SNMP work.
+- `PollingService.reset_runtime()` clears both the in-flight snapshot map and the backoff map, so a runtime reset starts from a clean polling state.
