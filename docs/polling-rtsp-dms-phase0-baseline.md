@@ -104,3 +104,11 @@ Batched connect probes keep the warm Siemens M60 object-read count at 44 OID obj
 - Connect semantics stay the same: success still requires at least one of `sysDescr` or `currentPattern`, and the probe falls back to individual reads if the batch fails or returns partial data.
 - Warm same-instance `PollingService.collect_snapshot`: 46 OID objects and 6 round trips end-to-end, with the warm poll still contributing 44 OID objects and 5 round trips.
 - Batch failure or partial connect data falls back to individual connect reads and preserves the existing status text and error behavior.
+
+### Phase 2f Note
+
+Overlapping `PollingService.collect_snapshot` calls for the same runtime key now share one in-flight connect/poll cycle, so duplicate SNMP work does not double under overlap.
+
+- Coalescing scope: per runtime key, limited to `PollingService.collect_snapshot`.
+- Same-key overlap telemetry still records both refresh calls, but only one underlying device connect/poll cycle runs and both callers receive the same payload/mp_model result.
+- Sequential same-key calls and different runtime keys still run independently, so warm-path counts remain unchanged outside overlap.

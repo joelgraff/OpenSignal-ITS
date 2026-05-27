@@ -1,6 +1,8 @@
 """Polling orchestration services."""
 
+import asyncio
 from datetime import datetime, timezone
+from threading import Lock
 
 from ..devices.siemens_m60 import SiemensM60
 from ..models.device import DeviceConfig, DeviceStatus
@@ -10,6 +12,9 @@ from .device_runtime_service import RUNTIME
 
 class PollingService:
     """Collect status snapshots from devices."""
+
+    _inflight_snapshot_lock = Lock()
+    _inflight_snapshot_results: dict[str, asyncio.Future[tuple[dict, int]]] = {}
 
     @staticmethod
     def _stamp_status(status: DeviceStatus) -> DeviceStatus:
@@ -23,6 +28,24 @@ class PollingService:
     @staticmethod
     def reset_poll_telemetry() -> None:
         POLLING_TELEMETRY.reset()
+
+    @staticmethod
+    def _claim_inflight_snapshot(runtime_key: str) -> tuple[asyncio.Future[tuple[dict, int]], bool]:
+        with PollingService._inflight_snapshot_lock:
+            existing = PollingService._inflight_snapshot_results.get(runtime_key)
+            if existing is not None:
+                return existing, False
+
+            future: asyncio.Future[tuple[dict, int]] = asyncio.get_running_loop().create_future()
+            PollingService._inflight_snapshot_results[runtime_key] = future
+            return future, True
+
+    @staticmethod
+    def _release_inflight_snapshot(runtime_key: str, future: asyncio.Future[tuple[dict, int]]) -> None:
+        with PollingService._inflight_snapshot_lock:
+            existing = PollingService._inflight_snapshot_results.get(runtime_key)
+            if existing is future:
+                del PollingService._inflight_snapshot_results[runtime_key]
 
     @staticmethod
     async def collect_connection_status(
@@ -43,6 +66,16 @@ class PollingService:
         device_id: str = "",
     ) -> tuple[dict, int]:
         _runtime_key, device = RUNTIME.get_or_create(device_type, config, device_id=device_id)
+        inflight_result, is_owner = PollingService._claim_inflight_snapshot(_runtime_key)
+
+        if not is_owner:
+            async with POLLING_TELEMETRY.observe(
+                _runtime_key,
+                "PollingService.collect_snapshot",
+                track_overlap=True,
+            ):
+                return await asyncio.shield(inflight_result)
+
         status_payload: dict[str, object]
         mp_model: int
         async with POLLING_TELEMETRY.observe(
@@ -50,14 +83,27 @@ class PollingService:
             "PollingService.collect_snapshot",
             track_overlap=True,
         ):
-            success = await device.connect()
-            if success:
-                device.status = PollingService._stamp_status(await device.poll())
-            else:
-                device.status = PollingService._stamp_status(device.status)
-            status_payload = device.status.model_dump(mode="json")
-            mp_model = getattr(device, "_mp_model", 1)
-        return status_payload, mp_model
+            try:
+                success = await device.connect()
+                if success:
+                    device.status = PollingService._stamp_status(await device.poll())
+                else:
+                    device.status = PollingService._stamp_status(device.status)
+                status_payload = device.status.model_dump(mode="json")
+                mp_model = getattr(device, "_mp_model", 1)
+                if not inflight_result.done():
+                    inflight_result.set_result((status_payload, mp_model))
+                return status_payload, mp_model
+            except asyncio.CancelledError:
+                if not inflight_result.done():
+                    inflight_result.cancel()
+                raise
+            except Exception as exc:
+                if not inflight_result.done():
+                    inflight_result.set_exception(exc)
+                raise
+            finally:
+                PollingService._release_inflight_snapshot(_runtime_key, inflight_result)
 
     @staticmethod
     def runtime_status() -> dict[str, object]:
@@ -79,6 +125,8 @@ class PollingService:
     @staticmethod
     def reset_runtime() -> None:
         RUNTIME.clear()
+        with PollingService._inflight_snapshot_lock:
+            PollingService._inflight_snapshot_results = {}
 
     @staticmethod
     async def start_managed_polling(

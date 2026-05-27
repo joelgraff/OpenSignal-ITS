@@ -55,6 +55,58 @@ class _OverlapTelemetryDevice(Device):
         return False
 
 
+class _CoalescingSnapshotDevice(Device):
+    device_type = "telemetry_coalesce"
+    started_event: asyncio.Event | None = None
+    release_event: asyncio.Event | None = None
+    target_starts: int = 1
+    connect_calls: int = 0
+    poll_calls: int = 0
+    fail_next_poll: bool = False
+    fail_message: str = "coalescing poll failed"
+
+    @classmethod
+    def reset_state(cls):
+        cls.started_event = None
+        cls.release_event = None
+        cls.target_starts = 1
+        cls.connect_calls = 0
+        cls.poll_calls = 0
+        cls.fail_next_poll = False
+        cls.fail_message = "coalescing poll failed"
+
+    async def connect(self) -> bool:
+        type(self).connect_calls += 1
+        self.status.is_online = True
+        self.status.status_text = "connected"
+        return True
+
+    async def poll(self) -> DeviceStatus:
+        cls = type(self)
+        if cls.started_event is None or cls.release_event is None:
+            raise RuntimeError("coalescing events were not configured")
+
+        cls.poll_calls += 1
+        if cls.poll_calls >= cls.target_starts:
+            cls.started_event.set()
+
+        await cls.release_event.wait()
+
+        if cls.fail_next_poll:
+            cls.fail_next_poll = False
+            raise RuntimeError(cls.fail_message)
+
+        self.status.is_online = True
+        self.status.status_text = "polled"
+        self.status.raw_data = {"poll_source": "coalesce-test"}
+        self.status.extra = {"poll_source": "coalesce-test"}
+        return self.status
+
+    async def command(self, command: str, params: dict) -> bool:
+        self.status.errors.append(f"unsupported command {command}")
+        return False
+
+
 class _FakeSNMPClient:
     def __init__(
         self,
@@ -166,10 +218,12 @@ class PollingTelemetryTests(unittest.TestCase):
     def setUp(self):
         PollingService.reset_runtime()
         PollingService.reset_poll_telemetry()
+        _CoalescingSnapshotDevice.reset_state()
 
     def tearDown(self):
         PollingService.reset_runtime()
         PollingService.reset_poll_telemetry()
+        _CoalescingSnapshotDevice.reset_state()
 
     def _poll_siemens(
         self,
@@ -271,6 +325,217 @@ class PollingTelemetryTests(unittest.TestCase):
         self.assertEqual(0, final_snapshot["active_refresh_count"])
         self.assertGreater(final_snapshot["scopes"]["Device.start_polling"]["last_duration_seconds"], 0.0)
         self.assertGreater(final_snapshot["scopes"]["PollingService.collect_snapshot"]["last_duration_seconds"], 0.0)
+
+    def test_collect_snapshot_coalesces_same_runtime_key_overlap(self):
+        async def _scenario() -> tuple[dict[str, object], tuple[dict, int], tuple[dict, int]]:
+            _CoalescingSnapshotDevice.started_event = asyncio.Event()
+            _CoalescingSnapshotDevice.release_event = asyncio.Event()
+            _CoalescingSnapshotDevice.target_starts = 1
+
+            config = DeviceConfig(ip_address="10.0.0.1", name="Coalesce")
+            runtime_key, _device = RUNTIME.get_or_create(
+                _CoalescingSnapshotDevice.device_type,
+                config,
+                device_id="dev-1",
+            )
+
+            first_task = asyncio.create_task(
+                PollingService.collect_snapshot(
+                    _CoalescingSnapshotDevice.device_type,
+                    config,
+                    device_id="dev-1",
+                )
+            )
+            await asyncio.wait_for(_CoalescingSnapshotDevice.started_event.wait(), timeout=1)
+
+            second_task = asyncio.create_task(
+                PollingService.collect_snapshot(
+                    _CoalescingSnapshotDevice.device_type,
+                    config,
+                    device_id="dev-1",
+                )
+            )
+            await asyncio.sleep(0)
+
+            live_snapshot = PollingService.poll_telemetry(runtime_key)
+            self.assertEqual(2, live_snapshot["active_refresh_count"])
+            self.assertEqual(2, live_snapshot["scopes"]["PollingService.collect_snapshot"]["count"])
+            self.assertTrue(live_snapshot["scopes"]["PollingService.collect_snapshot"]["last_overlap_detected"])
+            self.assertEqual(1, live_snapshot["scopes"]["PollingService.collect_snapshot"]["last_in_flight_before_start"])
+            self.assertEqual(1, _CoalescingSnapshotDevice.connect_calls)
+            self.assertEqual(1, _CoalescingSnapshotDevice.poll_calls)
+
+            _CoalescingSnapshotDevice.release_event.set()
+            first_result = await asyncio.wait_for(first_task, timeout=1)
+            second_result = await asyncio.wait_for(second_task, timeout=1)
+
+            self.assertEqual(first_result, second_result)
+            self.assertEqual("polled", first_result[0]["status_text"])
+            self.assertEqual(1, first_result[1])
+
+            return PollingService.poll_telemetry(runtime_key), first_result, second_result
+
+        final_snapshot, first_result, second_result = asyncio.run(_scenario())
+
+        self.assertEqual(first_result, second_result)
+        self.assertEqual(0, final_snapshot["active_refresh_count"])
+        self.assertGreater(final_snapshot["scopes"]["PollingService.collect_snapshot"]["last_duration_seconds"], 0.0)
+
+    def test_collect_snapshot_sequential_same_runtime_key_runs_separately(self):
+        async def _scenario() -> dict[str, object]:
+            _CoalescingSnapshotDevice.started_event = asyncio.Event()
+            _CoalescingSnapshotDevice.release_event = asyncio.Event()
+            _CoalescingSnapshotDevice.release_event.set()
+            _CoalescingSnapshotDevice.target_starts = 1
+
+            config = DeviceConfig(ip_address="10.0.0.1", name="Sequential")
+            runtime_key, _device = RUNTIME.get_or_create(
+                _CoalescingSnapshotDevice.device_type,
+                config,
+                device_id="dev-1",
+            )
+
+            first_result = await PollingService.collect_snapshot(
+                _CoalescingSnapshotDevice.device_type,
+                config,
+                device_id="dev-1",
+            )
+            second_result = await PollingService.collect_snapshot(
+                _CoalescingSnapshotDevice.device_type,
+                config,
+                device_id="dev-1",
+            )
+
+            self.assertEqual(2, _CoalescingSnapshotDevice.connect_calls)
+            self.assertEqual(2, _CoalescingSnapshotDevice.poll_calls)
+
+            snapshot = PollingService.poll_telemetry(runtime_key)
+            self.assertEqual(2, snapshot["scopes"]["PollingService.collect_snapshot"]["count"])
+            self.assertFalse(snapshot["scopes"]["PollingService.collect_snapshot"]["last_overlap_detected"])
+            self.assertEqual(0, snapshot["active_refresh_count"])
+
+            return snapshot
+
+        snapshot = asyncio.run(_scenario())
+
+        self.assertEqual(2, snapshot["scopes"]["PollingService.collect_snapshot"]["count"])
+
+    def test_collect_snapshot_different_runtime_keys_do_not_coalesce(self):
+        async def _scenario() -> tuple[dict[str, object], dict[str, object]]:
+            _CoalescingSnapshotDevice.started_event = asyncio.Event()
+            _CoalescingSnapshotDevice.release_event = asyncio.Event()
+            _CoalescingSnapshotDevice.target_starts = 2
+
+            config_one = DeviceConfig(ip_address="10.0.0.1", name="Key One")
+            config_two = DeviceConfig(ip_address="10.0.0.2", name="Key Two")
+            runtime_key_one, _device_one = RUNTIME.get_or_create(
+                _CoalescingSnapshotDevice.device_type,
+                config_one,
+                device_id="dev-1",
+            )
+            runtime_key_two, _device_two = RUNTIME.get_or_create(
+                _CoalescingSnapshotDevice.device_type,
+                config_two,
+                device_id="dev-2",
+            )
+
+            task_one = asyncio.create_task(
+                PollingService.collect_snapshot(
+                    _CoalescingSnapshotDevice.device_type,
+                    config_one,
+                    device_id="dev-1",
+                )
+            )
+            task_two = asyncio.create_task(
+                PollingService.collect_snapshot(
+                    _CoalescingSnapshotDevice.device_type,
+                    config_two,
+                    device_id="dev-2",
+                )
+            )
+            await asyncio.wait_for(_CoalescingSnapshotDevice.started_event.wait(), timeout=1)
+
+            self.assertEqual(2, _CoalescingSnapshotDevice.connect_calls)
+            self.assertEqual(2, _CoalescingSnapshotDevice.poll_calls)
+
+            _CoalescingSnapshotDevice.release_event.set()
+            await asyncio.wait_for(task_one, timeout=1)
+            await asyncio.wait_for(task_two, timeout=1)
+
+            snapshot_one = PollingService.poll_telemetry(runtime_key_one)
+            snapshot_two = PollingService.poll_telemetry(runtime_key_two)
+            return snapshot_one, snapshot_two
+
+        snapshot_one, snapshot_two = asyncio.run(_scenario())
+
+        self.assertEqual(1, snapshot_one["scopes"]["PollingService.collect_snapshot"]["count"])
+        self.assertEqual(1, snapshot_two["scopes"]["PollingService.collect_snapshot"]["count"])
+        self.assertFalse(snapshot_one["scopes"]["PollingService.collect_snapshot"]["last_overlap_detected"])
+        self.assertFalse(snapshot_two["scopes"]["PollingService.collect_snapshot"]["last_overlap_detected"])
+
+    def test_collect_snapshot_failed_inflight_call_is_released_for_future_calls(self):
+        async def _scenario() -> dict[str, object]:
+            _CoalescingSnapshotDevice.started_event = asyncio.Event()
+            _CoalescingSnapshotDevice.release_event = asyncio.Event()
+            _CoalescingSnapshotDevice.target_starts = 1
+            _CoalescingSnapshotDevice.fail_next_poll = True
+
+            config = DeviceConfig(ip_address="10.0.0.1", name="Failure")
+            runtime_key, _device = RUNTIME.get_or_create(
+                _CoalescingSnapshotDevice.device_type,
+                config,
+                device_id="dev-1",
+            )
+
+            task_one = asyncio.create_task(
+                PollingService.collect_snapshot(
+                    _CoalescingSnapshotDevice.device_type,
+                    config,
+                    device_id="dev-1",
+                )
+            )
+            await asyncio.wait_for(_CoalescingSnapshotDevice.started_event.wait(), timeout=1)
+
+            task_two = asyncio.create_task(
+                PollingService.collect_snapshot(
+                    _CoalescingSnapshotDevice.device_type,
+                    config,
+                    device_id="dev-1",
+                )
+            )
+
+            _CoalescingSnapshotDevice.release_event.set()
+            results = await asyncio.gather(task_one, task_two, return_exceptions=True)
+
+            self.assertEqual(1, _CoalescingSnapshotDevice.connect_calls)
+            self.assertEqual(1, _CoalescingSnapshotDevice.poll_calls)
+            self.assertIsInstance(results[0], RuntimeError)
+            self.assertIsInstance(results[1], RuntimeError)
+            self.assertEqual("coalescing poll failed", str(results[0]))
+            self.assertEqual("coalescing poll failed", str(results[1]))
+
+            _CoalescingSnapshotDevice.release_event = asyncio.Event()
+            _CoalescingSnapshotDevice.release_event.set()
+            _CoalescingSnapshotDevice.started_event = asyncio.Event()
+            _CoalescingSnapshotDevice.fail_next_poll = False
+
+            success_result = await PollingService.collect_snapshot(
+                _CoalescingSnapshotDevice.device_type,
+                config,
+                device_id="dev-1",
+            )
+
+            self.assertEqual(2, _CoalescingSnapshotDevice.connect_calls)
+            self.assertEqual(2, _CoalescingSnapshotDevice.poll_calls)
+            self.assertEqual("polled", success_result[0]["status_text"])
+
+            snapshot = PollingService.poll_telemetry(runtime_key)
+            return snapshot
+
+        snapshot = asyncio.run(_scenario())
+
+        self.assertEqual(3, snapshot["scopes"]["PollingService.collect_snapshot"]["count"])
+        self.assertFalse(snapshot["scopes"]["PollingService.collect_snapshot"]["last_overlap_detected"])
 
     def test_refresh_fleet_status_records_fleet_boundary_timing(self):
         class _FleetTelemetryProbe(FleetStateMixin, rx.State):
