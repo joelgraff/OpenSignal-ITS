@@ -85,10 +85,57 @@ class SiemensM60(Device):
         super().__init__(config)
         self._snmp = SNMPClient(config)
         self._mp_model = 0  # SNMPv1 is known-good for this controller.
+        self._poll_telemetry: dict[str, Any] | None = None
+        self._poll_telemetry_section: str | None = None
+        self._cached_sys_descr: str | None = None
+        self._cached_phase_max_green_1: dict[int, int] = {}
+
+    def _begin_poll_telemetry(self) -> dict[str, Any]:
+        return {
+            "request_count": 0,
+            "sections": {
+                "identity": 0,
+                "ring_status": 0,
+                "group_masks": 0,
+                "phase_grid": 0,
+            },
+            "poll_shape": {
+                "section_order": ["identity", "ring_status", "group_masks", "phase_grid"],
+                "rings": 2,
+                "groups": 2,
+                "phases": 16,
+                "reads_per_phase": 3,
+                "expected_request_count": 61,
+            },
+        }
+
+    def _record_poll_request(self) -> None:
+        telemetry = self._poll_telemetry
+        if telemetry is None:
+            return
+        telemetry["request_count"] = int(telemetry.get("request_count", 0)) + 1
+        section = self._poll_telemetry_section
+        if section is None:
+            return
+        sections = telemetry.setdefault("sections", {})
+        sections[section] = int(sections.get(section, 0)) + 1
+
+    async def _read_phase_max_green_1(self, target: UdpTransportTarget, phase: int) -> int | None:
+        if phase in self._cached_phase_max_green_1:
+            return self._cached_phase_max_green_1[phase]
+
+        phase_max_green_oid = OID_PHASE_MAX_GREEN_1_TEMPLATE.format(phase=phase)
+        value = self._to_int(await self._safe_get_oid(target, phase_max_green_oid))
+        if value is None:
+            return None
+
+        self._cached_phase_max_green_1[phase] = value
+        return value
 
     async def _safe_get_oid(self, target: UdpTransportTarget, oid: str) -> str | None:
         """Read one OID and return value as string or None on timeout/noSuchName."""
         try:
+            self._record_poll_request()
             value, error = await self._snmp.get_oid(
                 oid=oid,
                 mp_model=self._mp_model,
@@ -233,6 +280,8 @@ class SiemensM60(Device):
 
     async def poll(self) -> DeviceStatus:
         """Poll known-good OIDs and return structured status for UI."""
+        telemetry = self._begin_poll_telemetry()
+        self._poll_telemetry = telemetry
         runtime_key = getattr(self, "_runtime_key", "") or (
             f"{self.device_type or self.__class__.__name__.lower()}::{self.status.device_id}"
         )
@@ -245,10 +294,16 @@ class SiemensM60(Device):
                 self.status.errors = []
                 target = await self._snmp.create_target()
 
-                sys_descr = await self._safe_get_oid(target, OID_SYS_DESCR)
+                self._poll_telemetry_section = "identity"
+                sys_descr = self._cached_sys_descr
+                if sys_descr is None:
+                    sys_descr = await self._safe_get_oid(target, OID_SYS_DESCR)
+                    if sys_descr is not None:
+                        self._cached_sys_descr = sys_descr
                 current_pattern_raw = await self._safe_get_oid(target, OID_CURRENT_PATTERN)
                 unit_status_raw = await self._safe_get_oid(target, OID_UNIT_STATUS)
 
+                self._poll_telemetry_section = "ring_status"
                 ring_status: dict[str, dict[str, Any]] = {}
                 ring_state_parts: list[str] = []
                 for ring in (1, 2):
@@ -262,6 +317,7 @@ class SiemensM60(Device):
                     ring_status[str(ring)] = decoded
                     ring_state_parts.append(f"R{ring}:{decoded['state_name']}")
 
+                self._poll_telemetry_section = "group_masks"
                 ntcip_greens: set[int] = set()
                 ntcip_reds: set[int] = set()
                 ntcip_veh_calls: set[int] = set()
@@ -301,6 +357,10 @@ class SiemensM60(Device):
                         has_ntcip_ped_calls = True
                         ntcip_ped_calls |= self._decode_phase_group_bits(ped_mask, group)
 
+                has_ntcip_veh_calls = all(mask is not None for mask in ntcip_masks["veh_calls"].values())
+                has_ntcip_ped_calls = all(mask is not None for mask in ntcip_masks["ped_calls"].values())
+
+                self._poll_telemetry_section = "phase_grid"
                 phases: dict[str, dict[str, Any]] = {}
                 raw_phase_status: dict[str, int] = {}
                 active_vehicle_calls: list[int] = []
@@ -323,22 +383,28 @@ class SiemensM60(Device):
                         status_oid = OID_PHASE_STATUS_TEMPLATE_REF.format(phase=phase)
                         status_val = self._to_int(await self._safe_get_oid(target, status_oid))
 
-                    veh_call_val = self._to_int(await self._safe_get_oid(target, veh_call_oid))
-                    if veh_call_val is None:
-                        veh_call_oid = OID_VEH_CALL_TEMPLATE_REF.format(phase=phase)
+                    if has_ntcip_veh_calls:
+                        veh_call_val = 0
+                    else:
                         veh_call_val = self._to_int(await self._safe_get_oid(target, veh_call_oid))
+                        if veh_call_val is None:
+                            veh_call_oid = OID_VEH_CALL_TEMPLATE_REF.format(phase=phase)
+                            veh_call_val = self._to_int(await self._safe_get_oid(target, veh_call_oid))
 
-                    ped_call_val = self._to_int(await self._safe_get_oid(target, ped_call_oid))
-                    if ped_call_val is None:
-                        ped_call_oid = OID_PED_CALL_TEMPLATE_REF.format(phase=phase)
+                    if has_ntcip_ped_calls:
+                        ped_call_val = 0
+                    else:
                         ped_call_val = self._to_int(await self._safe_get_oid(target, ped_call_oid))
+                        if ped_call_val is None:
+                            ped_call_oid = OID_PED_CALL_TEMPLATE_REF.format(phase=phase)
+                            ped_call_val = self._to_int(await self._safe_get_oid(target, ped_call_oid))
 
                     timer_val = self._to_int(await self._safe_get_oid(target, timer_oid))
                     if timer_val is None:
                         timer_oid = OID_TIME_REMAINING_TEMPLATE_REF.format(phase=phase)
                         timer_val = self._to_int(await self._safe_get_oid(target, timer_oid))
 
-                    max_green_1_val = self._to_int(await self._safe_get_oid(target, max_green_1_oid))
+                    max_green_1_val = await self._read_phase_max_green_1(target, phase)
 
                     status_val = status_val or 0
                     veh_call_val = veh_call_val or 0
@@ -407,6 +473,7 @@ class SiemensM60(Device):
                     "ring_status": ring_status,
                     "ring_status_summary": ", ".join(ring_state_parts) if ring_state_parts else "none",
                     "ntcip_phase_group_masks": ntcip_masks,
+                    "poll_telemetry": telemetry,
                 }
 
                 self.status.raw_data = {
