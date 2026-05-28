@@ -12,7 +12,20 @@ from ..db import CommandAuditRecord, STORE
 from ..services import CommandSafetyService, CommandService
 
 
+_COMMAND_LIFECYCLE_LABELS = {
+    "awaiting_confirmation": "Awaiting Confirmation",
+    "confirmation_expired": "Confirmation Expired",
+    "confirmation_rejected": "Confirmation Rejected",
+    "executing": "Executing",
+    "applied": "Applied",
+    "failed": "Failed",
+}
+
+
 class CommandStateMixin(rx.State, mixin=True):
+    selected_controller_command_lifecycle: dict[str, Any] = {}
+    selected_controller_command_lifecycle_notice: str = ""
+
     def _safe_log_command(
         self,
         cmd_type: str,
@@ -41,6 +54,36 @@ class CommandStateMixin(rx.State, mixin=True):
             # Logging should not block command execution paths.
             pass
 
+    def _set_command_lifecycle_state(
+        self,
+        *,
+        stage: str,
+        command_id: str = "",
+        correlation_id: str = "",
+        device_id: str = "",
+        notice: str = "",
+        success: bool = False,
+        is_terminal: bool = False,
+        acknowledged: bool = False,
+    ):
+        stage_label = _COMMAND_LIFECYCLE_LABELS.get(stage, "Unknown")
+        lifecycle_notice = notice.strip() or stage_label
+        updated_at = self._utc_now_iso() if hasattr(self, "_utc_now_iso") else ""
+        resolved_device_id = device_id.strip() or str(getattr(self, "selected_device_id", "")).strip()
+        self.selected_controller_command_lifecycle = {
+            "stage": stage,
+            "stage_label": stage_label,
+            "command_id": command_id,
+            "correlation_id": correlation_id,
+            "device_id": resolved_device_id,
+            "notice": lifecycle_notice,
+            "success": bool(success),
+            "is_terminal": bool(is_terminal),
+            "acknowledged": bool(acknowledged),
+            "updated_at": updated_at,
+        }
+        self.selected_controller_command_lifecycle_notice = f"{stage_label}: {lifecycle_notice}"
+
     async def send_command(self, cmd_type: str, value: Any, force_confirmed: bool = False):
         """Send timing-related commands to the controller."""
         self.is_loading = True
@@ -49,6 +92,14 @@ class CommandStateMixin(rx.State, mixin=True):
             if not self._is_role_authorized({"operator", "admin"}):
                 auth_error = "Command denied: operator or admin authentication required."
                 self.error = auth_error
+                self._set_command_lifecycle_state(
+                    stage="failed",
+                    command_id=cmd_type,
+                    correlation_id=correlation_id,
+                    notice=auth_error,
+                    success=False,
+                    is_terminal=True,
+                )
                 self._safe_log_command(
                     cmd_type=cmd_type,
                     value=value,
@@ -60,7 +111,7 @@ class CommandStateMixin(rx.State, mixin=True):
                 return
 
             if self._requires_confirmation(cmd_type) and not force_confirmed:
-                self._start_command_confirmation(cmd_type, value)
+                self._start_command_confirmation(cmd_type, value, correlation_id=correlation_id)
                 self.error = self.pending_confirmation_notice
                 self._safe_log_command(
                     cmd_type=cmd_type,
@@ -82,6 +133,14 @@ class CommandStateMixin(rx.State, mixin=True):
                 self.write_mode_active = False
                 self.write_unlock_until = ""
                 self.error = safety.reason
+                self._set_command_lifecycle_state(
+                    stage="failed",
+                    command_id=cmd_type,
+                    correlation_id=correlation_id,
+                    notice=safety.reason,
+                    success=False,
+                    is_terminal=True,
+                )
                 self._safe_log_command(
                     cmd_type=cmd_type,
                     value=value,
@@ -93,7 +152,16 @@ class CommandStateMixin(rx.State, mixin=True):
                 return
 
             device_type, device_id, config = self._selected_device_target()
-            success, payload, mp_model, error = await CommandService.execute_command(
+            self._set_command_lifecycle_state(
+                stage="executing",
+                command_id=cmd_type,
+                correlation_id=correlation_id,
+                device_id=device_id,
+                notice=f"Executing {cmd_type} for {device_id}.",
+                success=False,
+                is_terminal=False,
+            )
+            result = await CommandService.execute_command_result(
                 device_type=device_type,
                 config=config,
                 cmd_type=cmd_type,
@@ -106,27 +174,55 @@ class CommandStateMixin(rx.State, mixin=True):
                 value=value,
                 correlation_id=correlation_id,
                 allowed=True,
-                success=success,
-                error=error,
+                success=result.success,
+                error=result.error,
             )
-            if success:
+            if result.success:
                 self._apply_selected_status_result(
                     device_id,
                     device_type,
-                    payload,
-                    mp_model,
+                    result.payload,
+                    result.mp_model,
                     correlation_id=correlation_id,
                     source="command",
                     status_text_default="Command applied",
                 )
+                self._set_command_lifecycle_state(
+                    stage=result.lifecycle_stage,
+                    command_id=cmd_type,
+                    correlation_id=correlation_id,
+                    device_id=device_id,
+                    notice=result.lifecycle_notice,
+                    success=True,
+                    is_terminal=True,
+                    acknowledged=result.acknowledged,
+                )
             else:
-                self.m60_status = payload
+                self.m60_status = result.payload
                 self.m60_status_json = json.dumps(self.m60_status, indent=2)
-                self.error = error
+                self.error = result.error
                 self.is_online = bool(self.m60_status.get("is_online", False))
                 self._cache_device_status(device_id, device_type, self.m60_status)
+                self._set_command_lifecycle_state(
+                    stage=result.lifecycle_stage,
+                    command_id=cmd_type,
+                    correlation_id=correlation_id,
+                    device_id=device_id,
+                    notice=result.lifecycle_notice,
+                    success=False,
+                    is_terminal=True,
+                    acknowledged=result.acknowledged,
+                )
         except Exception as exc:
             self.error = str(exc)
+            self._set_command_lifecycle_state(
+                stage="failed",
+                command_id=cmd_type,
+                correlation_id=correlation_id,
+                notice=str(exc),
+                success=False,
+                is_terminal=True,
+            )
         finally:
             self.is_loading = False
 

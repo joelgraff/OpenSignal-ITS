@@ -126,6 +126,25 @@ class RegistryServicesTests(unittest.TestCase):
         self.assertEqual("", error)
         self.assertEqual(1, mp_model)
 
+    def test_command_service_execute_command_result_reports_applied_lifecycle(self):
+        config = DeviceConfig(ip_address="10.0.0.1", name="Fake")
+
+        result = asyncio.run(
+            CommandService.execute_command_result(
+                device_type="fake_registry",
+                config=config,
+                cmd_type="set_mode",
+                value="coordinated",
+                safe_command_probe=True,
+                device_id="dev-1",
+            )
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual("applied", result.lifecycle_stage)
+        self.assertEqual("Command applied.", result.lifecycle_notice)
+        self.assertTrue(result.acknowledged)
+
     def test_command_service_returns_unknown_command_error(self):
         config = DeviceConfig(ip_address="10.0.0.1", name="Fake")
 
@@ -142,6 +161,25 @@ class RegistryServicesTests(unittest.TestCase):
 
         self.assertFalse(success)
         self.assertIn("Unknown command", error)
+
+    def test_command_service_execute_command_result_reports_failed_lifecycle(self):
+        config = DeviceConfig(ip_address="10.0.0.1", name="Fake")
+
+        result = asyncio.run(
+            CommandService.execute_command_result(
+                device_type="fake_registry",
+                config=config,
+                cmd_type="unsupported",
+                value=True,
+                safe_command_probe=True,
+                device_id="dev-1",
+            )
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual("failed", result.lifecycle_stage)
+        self.assertIn("Unknown command", result.lifecycle_notice)
+        self.assertFalse(result.acknowledged)
 
     def test_command_service_shapes_manual_hold_params_explicitly(self):
         config = DeviceConfig(ip_address="10.0.0.1", name="Fake")

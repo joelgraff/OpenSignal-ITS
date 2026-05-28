@@ -569,31 +569,26 @@ def _intersection_control_panel() -> rx.Component:
     return rx.vstack(
         rx.text("Pattern / Mode", size="1", color="gray"),
         rx.hstack(
-            rx.button(
-                "Pattern 1",
-                on_click=TrafficState.select_pattern_1,
-                size="1",
-                disabled=rx.cond(TrafficState.selected_controller_supports_select_pattern, False, True),
+            rx.foreach(
+                TrafficState.selected_controller_pattern_action_rows,
+                lambda row: rx.cond(
+                    row["action_id"] == "select_pattern_1",
+                    rx.button(row["label"], on_click=TrafficState.select_pattern_1, size="1"),
+                    rx.button(row["label"], on_click=TrafficState.select_pattern_2, size="1"),
+                ),
             ),
-            rx.button(
-                "Pattern 2",
-                on_click=TrafficState.select_pattern_2,
-                size="1",
-                disabled=rx.cond(TrafficState.selected_controller_supports_select_pattern, False, True),
-            ),
-            rx.button(
-                "Free",
-                on_click=TrafficState.set_mode_free,
-                size="1",
-                variant="outline",
-                disabled=rx.cond(TrafficState.selected_controller_supports_set_mode, False, True),
-            ),
-            rx.button(
-                "Coord",
-                on_click=TrafficState.set_mode_coordinated,
-                size="1",
-                variant="outline",
-                disabled=rx.cond(TrafficState.selected_controller_supports_set_mode, False, True),
+            rx.foreach(
+                TrafficState.selected_controller_mode_action_rows,
+                lambda row: rx.cond(
+                    row["action_id"] == "set_mode_free",
+                    rx.button(row["label"], on_click=TrafficState.set_mode_free, size="1", variant="outline"),
+                    rx.button(
+                        row["label"],
+                        on_click=TrafficState.set_mode_coordinated,
+                        size="1",
+                        variant="outline",
+                    ),
+                ),
             ),
             spacing="1",
             wrap="wrap",
@@ -619,6 +614,11 @@ def _intersection_control_panel() -> rx.Component:
             width="100%",
         ),
         rx.text(TrafficState.selected_controller_command_notice, size="1", color="gray"),
+        rx.cond(
+            TrafficState.selected_controller_command_lifecycle_notice != "",
+            rx.text(TrafficState.selected_controller_command_lifecycle_notice, size="1", color="gray"),
+            rx.fragment(),
+        ),
         rx.divider(),
         rx.text("Unlock Write", size="1", color="gray"),
         rx.hstack(

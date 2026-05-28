@@ -24,6 +24,7 @@ class SafetyStateMixin(rx.State, mixin=True):
     pending_confirmation_expires: str = ""
     pending_command_type: str = ""
     pending_command_value_json: str = ""
+    pending_command_correlation_id: str = ""
     pending_confirmation_notice: str = ""
 
     def update_safe_command_probe(self, value: bool):
@@ -53,15 +54,26 @@ class SafetyStateMixin(rx.State, mixin=True):
             return False
         return command_requires_confirmation(cmd_type)
 
-    def _start_command_confirmation(self, cmd_type: str, value: Any):
+    def _start_command_confirmation(self, cmd_type: str, value: Any, correlation_id: str = ""):
         token = str(random.randint(100000, 999999))
         self.pending_confirmation_token = token
         self.pending_confirmation_expires = self._utc_future_iso(90)
         self.pending_command_type = cmd_type
         self.pending_command_value_json = json.dumps(value)
+        self.pending_command_correlation_id = correlation_id
         self.pending_confirmation_notice = (
             f"Confirmation required for {cmd_type}. Enter token {token} within 90 seconds."
         )
+        set_lifecycle_state = getattr(self, "_set_command_lifecycle_state", None)
+        if callable(set_lifecycle_state):
+            set_lifecycle_state(
+                stage="awaiting_confirmation",
+                command_id=cmd_type,
+                correlation_id=correlation_id,
+                notice=self.pending_confirmation_notice,
+                success=False,
+                is_terminal=False,
+            )
 
     def unlock_write_mode(self):
         if not self._is_role_authorized({"operator", "admin"}):
@@ -95,15 +107,38 @@ class SafetyStateMixin(rx.State, mixin=True):
             self.error = "No pending command to confirm."
             return
         if self._has_expired(self.pending_confirmation_expires):
+            pending_command_type = self.pending_command_type
+            pending_correlation_id = self.pending_command_correlation_id
             self.error = "Confirmation token expired."
             self.pending_confirmation_token = ""
             self.pending_confirmation_expires = ""
             self.pending_command_type = ""
             self.pending_command_value_json = ""
+            self.pending_command_correlation_id = ""
             self.pending_confirmation_notice = ""
+            set_lifecycle_state = getattr(self, "_set_command_lifecycle_state", None)
+            if callable(set_lifecycle_state):
+                set_lifecycle_state(
+                    stage="confirmation_expired",
+                    command_id=pending_command_type,
+                    correlation_id=pending_correlation_id,
+                    notice=self.error,
+                    success=False,
+                    is_terminal=True,
+                )
             return
         if self.confirmation_input.strip() != self.pending_confirmation_token:
             self.error = "Confirmation token mismatch."
+            set_lifecycle_state = getattr(self, "_set_command_lifecycle_state", None)
+            if callable(set_lifecycle_state):
+                set_lifecycle_state(
+                    stage="confirmation_rejected",
+                    command_id=self.pending_command_type,
+                    correlation_id=self.pending_command_correlation_id,
+                    notice=self.error,
+                    success=False,
+                    is_terminal=False,
+                )
             return
 
         cmd_type = self.pending_command_type
@@ -115,6 +150,7 @@ class SafetyStateMixin(rx.State, mixin=True):
         self.pending_confirmation_expires = ""
         self.pending_command_type = ""
         self.pending_command_value_json = ""
+        self.pending_command_correlation_id = ""
         self.pending_confirmation_notice = ""
         self.confirmation_input = ""
 

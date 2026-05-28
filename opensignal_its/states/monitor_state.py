@@ -55,6 +55,8 @@ class MonitorStateMixin(rx.State, mixin=True):
     monitor_view: str = "dashboard"
     selected_controller_command_capabilities: list[dict[str, Any]] = []
     selected_controller_command_notice: str = "Select a controller to view command capabilities."
+    selected_controller_pattern_action_rows: list[dict[str, str]] = []
+    selected_controller_mode_action_rows: list[dict[str, str]] = []
     selected_controller_supports_select_pattern: bool = False
     selected_controller_supports_set_mode: bool = False
     selected_controller_supports_manual_hold: bool = False
@@ -67,11 +69,64 @@ class MonitorStateMixin(rx.State, mixin=True):
 
     def _clear_selected_controller_command_state(self, notice: str):
         self.selected_controller_command_capabilities = []
+        self.selected_controller_pattern_action_rows = []
+        self.selected_controller_mode_action_rows = []
         self.selected_controller_supports_select_pattern = False
         self.selected_controller_supports_set_mode = False
         self.selected_controller_supports_manual_hold = False
         self.selected_controller_supports_advance_phase = False
         self.selected_controller_command_notice = notice
+
+    def _command_quick_action_rows(
+        self,
+        command_id: str,
+        action_by_value: dict[Any, tuple[str, str]],
+    ) -> list[dict[str, str]]:
+        capability = next(
+            (
+                item
+                for item in self.selected_controller_command_capabilities
+                if str(item.get("command_id", "")).strip() == command_id
+            ),
+            {},
+        )
+
+        rows: list[dict[str, str]] = []
+        seen_action_ids: set[str] = set()
+
+        raw_options = capability.get("options", [])
+        if isinstance(raw_options, list):
+            for option in raw_options:
+                if not isinstance(option, dict):
+                    continue
+                action = action_by_value.get(option.get("value"))
+                if action is None:
+                    continue
+                action_id, fallback_label = action
+                if action_id in seen_action_ids:
+                    continue
+                label = str(option.get("label", "")).strip() or fallback_label
+                rows.append({"action_id": action_id, "label": label})
+                seen_action_ids.add(action_id)
+
+        if rows:
+            return rows
+
+        raw_allowed_values = capability.get("allowed_values", [])
+        if not isinstance(raw_allowed_values, list):
+            return []
+
+        for value in raw_allowed_values:
+            action = action_by_value.get(value)
+            if action is None:
+                continue
+            action_id, fallback_label = action
+            if action_id in seen_action_ids:
+                continue
+            rows.append({"action_id": action_id, "label": fallback_label})
+            seen_action_ids.add(action_id)
+
+        return rows
 
     def _normalize_command_capability_payload(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         raw_commands = payload.get("command_capabilities", [])
@@ -174,6 +229,20 @@ class MonitorStateMixin(rx.State, mixin=True):
         self.selected_controller_supports_set_mode = "set_mode" in supported_command_ids
         self.selected_controller_supports_manual_hold = "manual_hold" in supported_command_ids
         self.selected_controller_supports_advance_phase = "advance_phase" in supported_command_ids
+        self.selected_controller_pattern_action_rows = self._command_quick_action_rows(
+            "select_pattern",
+            {
+                1: ("select_pattern_1", "Pattern 1"),
+                2: ("select_pattern_2", "Pattern 2"),
+            },
+        )
+        self.selected_controller_mode_action_rows = self._command_quick_action_rows(
+            "set_mode",
+            {
+                "free": ("set_mode_free", "Free"),
+                "coordinated": ("set_mode_coordinated", "Coord"),
+            },
+        )
 
         if notice:
             self.selected_controller_command_notice = notice

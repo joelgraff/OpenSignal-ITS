@@ -8,6 +8,7 @@ import reflex as rx
 from opensignal_its.models.event import AlarmDisplayRow, EventDisplayView, TimelineDisplayRow
 from opensignal_its.models.fleet import FleetDeviceStatus, FleetRefreshView, RuntimeRegistryView
 from opensignal_its.models.media import MediaStreamStatus
+from opensignal_its.services.command_service import CommandExecutionResult
 from opensignal_its.states.auth_state import AuthStateMixin
 from opensignal_its.states.audit_state import AuditStateMixin
 from opensignal_its.states.command_state import CommandStateMixin
@@ -529,8 +530,8 @@ class TrafficStateAdapterTests(unittest.TestCase):
                             "value_type": "integer",
                             "allowed_values": [1, 2],
                             "options": [
-                                {"value": 1, "label": "Pattern 1"},
-                                {"value": 2, "label": "Pattern 2"},
+                                {"value": 1, "label": "Plan A"},
+                                {"value": 2, "label": "Plan B"},
                             ],
                         },
                         {
@@ -540,8 +541,8 @@ class TrafficStateAdapterTests(unittest.TestCase):
                             "value_type": "string",
                             "allowed_values": ["free", "coordinated"],
                             "options": [
-                                {"value": "free", "label": "Free"},
-                                {"value": "coordinated", "label": "Coord"},
+                                {"value": "free", "label": "Free Flow"},
+                                {"value": "coordinated", "label": "Coord Plan"},
                             ],
                         },
                         {
@@ -578,10 +579,17 @@ class TrafficStateAdapterTests(unittest.TestCase):
         )
         self.assertEqual(
             [
-                {"value": 1, "label": "Pattern 1"},
-                {"value": 2, "label": "Pattern 2"},
+                {"value": 1, "label": "Plan A"},
+                {"value": 2, "label": "Plan B"},
             ],
             probe.selected_controller_command_capabilities[0]["options"],
+        )
+        self.assertEqual(
+            [
+                {"action_id": "select_pattern_1", "label": "Plan A"},
+                {"action_id": "select_pattern_2", "label": "Plan B"},
+            ],
+            probe.selected_controller_pattern_action_rows,
         )
         self.assertEqual(
             "string",
@@ -590,6 +598,13 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual(
             ["free", "coordinated"],
             probe.selected_controller_command_capabilities[1]["allowed_values"],
+        )
+        self.assertEqual(
+            [
+                {"action_id": "set_mode_free", "label": "Free Flow"},
+                {"action_id": "set_mode_coordinated", "label": "Coord Plan"},
+            ],
+            probe.selected_controller_mode_action_rows,
         )
         self.assertEqual(
             "boolean",
@@ -636,6 +651,8 @@ class TrafficStateAdapterTests(unittest.TestCase):
             probe.update_selected_device_id("int-2")
 
         self.assertEqual([], probe.selected_controller_command_capabilities)
+        self.assertEqual([], probe.selected_controller_pattern_action_rows)
+        self.assertEqual([], probe.selected_controller_mode_action_rows)
         self.assertFalse(probe.selected_controller_supports_select_pattern)
         self.assertFalse(probe.selected_controller_supports_set_mode)
         self.assertFalse(probe.selected_controller_supports_manual_hold)
@@ -643,6 +660,58 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual(
             "Command capabilities are unavailable for the selected controller.",
             probe.selected_controller_command_notice,
+        )
+
+    def test_monitor_state_quick_action_rows_ignore_unsupported_capability_options(self):
+        probe = self._make_monitor_media_probe(
+            """[
+                {
+                    "device_id": "int-3",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.3"
+                }
+            ]"""
+        )
+
+        class _CapabilityDevice:
+            def get_capabilities(self):
+                return {
+                    "device_family": "traffic_signal_controller",
+                    "protocol_family": "ntcip",
+                    "command_capabilities": [
+                        {
+                            "command_id": "select_pattern",
+                            "requires_confirmation": True,
+                            "requires_value": True,
+                            "value_type": "integer",
+                            "options": [
+                                {"value": 2, "label": "Plan B"},
+                                {"value": 9, "label": "Plan 9"},
+                            ],
+                        },
+                        {
+                            "command_id": "set_mode",
+                            "requires_confirmation": True,
+                            "requires_value": True,
+                            "value_type": "string",
+                            "allowed_values": ["free", "flash"],
+                        },
+                    ],
+                }
+
+        with patch(
+            "opensignal_its.states.monitor_state.Device.create",
+            return_value=_CapabilityDevice(),
+        ):
+            probe.update_selected_device_id("int-3")
+
+        self.assertEqual(
+            [{"action_id": "select_pattern_2", "label": "Plan B"}],
+            probe.selected_controller_pattern_action_rows,
+        )
+        self.assertEqual(
+            [{"action_id": "set_mode_free", "label": "Free"}],
+            probe.selected_controller_mode_action_rows,
         )
 
     def test_monitor_state_selected_controller_media_empty_state_without_media_streams(self):
@@ -1487,6 +1556,82 @@ class TrafficStateAdapterTests(unittest.TestCase):
 
         command_requires_confirmation.assert_not_called()
 
+    def test_command_state_confirmation_required_sets_lifecycle_state(self):
+        class _CommandConfirmationProbe(CommandStateMixin, SafetyStateMixin, TimeStateMixin, rx.State):
+            ip_address: str = "10.0.0.1"
+            error: str = ""
+            is_loading: bool = False
+
+            def _is_role_authorized(self, allowed_roles):
+                return True
+
+            def _actor_name(self):
+                return "operator"
+
+            def _requires_confirmation(self, cmd_type):
+                return True
+
+        probe = _CommandConfirmationProbe(_reflex_internal_init=True)
+        probe.safe_command_probe = False
+
+        with patch("opensignal_its.states.command_state.uuid4", return_value=type("_Uuid", (), {"hex": "corr-await"})()), patch(
+            "opensignal_its.states.command_state.STORE.log_command",
+        ):
+            asyncio.run(probe.send_command("set_mode", "free"))
+
+        self.assertEqual("awaiting_confirmation", probe.selected_controller_command_lifecycle["stage"])
+        self.assertEqual("set_mode", probe.selected_controller_command_lifecycle["command_id"])
+        self.assertEqual("corr-await", probe.selected_controller_command_lifecycle["correlation_id"])
+        self.assertFalse(probe.selected_controller_command_lifecycle["is_terminal"])
+        self.assertEqual("corr-await", probe.pending_command_correlation_id)
+        self.assertIn("Awaiting Confirmation:", probe.selected_controller_command_lifecycle_notice)
+        self.assertIn("Confirmation required for set_mode.", probe.selected_controller_command_lifecycle_notice)
+
+    def test_safety_state_confirm_pending_command_expired_sets_lifecycle_state(self):
+        class _CommandConfirmationProbe(CommandStateMixin, SafetyStateMixin, TimeStateMixin, rx.State):
+            error: str = ""
+            is_loading: bool = False
+
+        probe = _CommandConfirmationProbe(_reflex_internal_init=True)
+        probe.pending_command_type = "set_mode"
+        probe.pending_command_value_json = json.dumps("free")
+        probe.pending_command_correlation_id = "corr-expired"
+        probe.pending_confirmation_token = "123456"
+        probe.pending_confirmation_expires = "2000-01-01T00:00:00+00:00"
+
+        asyncio.run(probe.confirm_pending_command())
+
+        self.assertEqual("Confirmation token expired.", probe.error)
+        self.assertEqual("confirmation_expired", probe.selected_controller_command_lifecycle["stage"])
+        self.assertEqual("set_mode", probe.selected_controller_command_lifecycle["command_id"])
+        self.assertEqual("corr-expired", probe.selected_controller_command_lifecycle["correlation_id"])
+        self.assertTrue(probe.selected_controller_command_lifecycle["is_terminal"])
+        self.assertEqual("", probe.pending_command_correlation_id)
+        self.assertIn("Confirmation Expired:", probe.selected_controller_command_lifecycle_notice)
+
+    def test_safety_state_confirm_pending_command_mismatch_sets_lifecycle_state(self):
+        class _CommandConfirmationProbe(CommandStateMixin, SafetyStateMixin, TimeStateMixin, rx.State):
+            error: str = ""
+            is_loading: bool = False
+
+        probe = _CommandConfirmationProbe(_reflex_internal_init=True)
+        probe.pending_command_type = "set_mode"
+        probe.pending_command_value_json = json.dumps("free")
+        probe.pending_command_correlation_id = "corr-reject"
+        probe.pending_confirmation_token = "123456"
+        probe.pending_confirmation_expires = probe._utc_future_iso(60)
+        probe.confirmation_input = "000000"
+
+        asyncio.run(probe.confirm_pending_command())
+
+        self.assertEqual("Confirmation token mismatch.", probe.error)
+        self.assertEqual("confirmation_rejected", probe.selected_controller_command_lifecycle["stage"])
+        self.assertEqual("set_mode", probe.selected_controller_command_lifecycle["command_id"])
+        self.assertEqual("corr-reject", probe.selected_controller_command_lifecycle["correlation_id"])
+        self.assertFalse(probe.selected_controller_command_lifecycle["is_terminal"])
+        self.assertEqual("123456", probe.pending_confirmation_token)
+        self.assertIn("Confirmation Rejected:", probe.selected_controller_command_lifecycle_notice)
+
     def test_command_state_send_command_routes_success_through_shared_helper(self):
         probe = self._make_command_status_probe()
         probe.status_log_calls = []
@@ -1499,13 +1644,21 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "errors": [],
         }
 
-        async def _fake_execute_command(device_type, config, cmd_type, value, safe_command_probe, device_id=""):
-            return True, payload, 1, ""
+        async def _fake_execute_command_result(device_type, config, cmd_type, value, safe_command_probe, device_id=""):
+            return CommandExecutionResult(
+                success=True,
+                payload=payload,
+                mp_model=1,
+                error="",
+                lifecycle_stage="applied",
+                lifecycle_notice="Command applied.",
+                acknowledged=True,
+            )
 
         with patch("opensignal_its.states.command_state.uuid4", return_value=type("_Uuid", (), {"hex": "corr-123"})()), patch(
-            "opensignal_its.states.command_state.CommandService.execute_command",
-            side_effect=_fake_execute_command,
-        ) as execute_command, patch(
+            "opensignal_its.states.command_state.CommandService.execute_command_result",
+            side_effect=_fake_execute_command_result,
+        ) as execute_command_result, patch(
             "opensignal_its.states.command_state.STORE.log_command",
         ) as log_command, patch.object(
             type(probe),
@@ -1514,7 +1667,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
         ) as apply_selected_status_result:
             asyncio.run(probe.send_command("set_mode", "free"))
 
-        execute_command.assert_awaited_once()
+        execute_command_result.assert_awaited_once()
         apply_selected_status_result.assert_called_once_with(
             "int-1",
             "siemens_m60",
@@ -1537,6 +1690,12 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual("v2c", probe.active_snmp_version)
         self.assertEqual("", probe.error)
         self.assertEqual("", probe.m60_status.get("status_text", ""))
+        self.assertEqual("applied", probe.selected_controller_command_lifecycle["stage"])
+        self.assertEqual("set_mode", probe.selected_controller_command_lifecycle["command_id"])
+        self.assertEqual("corr-123", probe.selected_controller_command_lifecycle["correlation_id"])
+        self.assertTrue(probe.selected_controller_command_lifecycle["acknowledged"])
+        self.assertTrue(probe.selected_controller_command_lifecycle["is_terminal"])
+        self.assertIn("Applied:", probe.selected_controller_command_lifecycle_notice)
 
     def test_command_state_send_command_failure_keeps_failure_branch_behavior(self):
         probe = self._make_command_status_probe()
@@ -1552,13 +1711,21 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "errors": [],
         }
 
-        async def _fake_execute_command(device_type, config, cmd_type, value, safe_command_probe, device_id=""):
-            return False, payload, 1, "Command failed"
+        async def _fake_execute_command_result(device_type, config, cmd_type, value, safe_command_probe, device_id=""):
+            return CommandExecutionResult(
+                success=False,
+                payload=payload,
+                mp_model=1,
+                error="Command failed",
+                lifecycle_stage="failed",
+                lifecycle_notice="Command failed",
+                acknowledged=False,
+            )
 
         with patch("opensignal_its.states.command_state.uuid4", return_value=type("_Uuid", (), {"hex": "corr-456"})()), patch(
-            "opensignal_its.states.command_state.CommandService.execute_command",
-            side_effect=_fake_execute_command,
-        ) as execute_command, patch(
+            "opensignal_its.states.command_state.CommandService.execute_command_result",
+            side_effect=_fake_execute_command_result,
+        ) as execute_command_result, patch(
             "opensignal_its.states.command_state.STORE.log_command",
         ) as log_command, patch.object(
             type(probe),
@@ -1567,7 +1734,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
         ) as apply_selected_status_result:
             asyncio.run(probe.send_command("set_mode", "free"))
 
-        execute_command.assert_awaited_once()
+        execute_command_result.assert_awaited_once()
         apply_selected_status_result.assert_not_called()
         log_command.assert_called_once()
         self.assertEqual("Command failed", probe.error)
@@ -1575,6 +1742,12 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual("previous", probe.status_text)
         self.assertEqual(("int-1", "siemens_m60", payload), probe.cached_status)
         self.assertEqual([], probe.status_log_calls)
+        self.assertEqual("failed", probe.selected_controller_command_lifecycle["stage"])
+        self.assertEqual("set_mode", probe.selected_controller_command_lifecycle["command_id"])
+        self.assertEqual("corr-456", probe.selected_controller_command_lifecycle["correlation_id"])
+        self.assertFalse(probe.selected_controller_command_lifecycle["acknowledged"])
+        self.assertTrue(probe.selected_controller_command_lifecycle["is_terminal"])
+        self.assertIn("Failed:", probe.selected_controller_command_lifecycle_notice)
 
     def test_fleet_state_interval_helpers_apply_bounds_and_fallbacks(self):
         class _FleetProbe(FleetStateMixin, rx.State):
@@ -1732,6 +1905,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "pending_confirmation_expires",
             "pending_command_type",
             "pending_command_value_json",
+            "pending_command_correlation_id",
             "pending_confirmation_notice",
             "update_safe_command_probe",
             "update_operator_key_input",
@@ -1835,6 +2009,8 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "monitor_view",
             "selected_controller_command_capabilities",
             "selected_controller_command_notice",
+            "selected_controller_pattern_action_rows",
+            "selected_controller_mode_action_rows",
             "selected_controller_supports_select_pattern",
             "selected_controller_supports_set_mode",
             "selected_controller_supports_manual_hold",
@@ -1877,6 +2053,9 @@ class TrafficStateAdapterTests(unittest.TestCase):
     def test_traffic_state_exposes_command_state_members(self):
         required = [
             "_safe_log_command",
+            "selected_controller_command_lifecycle",
+            "selected_controller_command_lifecycle_notice",
+            "_set_command_lifecycle_state",
             "send_command",
             "select_pattern_1",
             "select_pattern_2",

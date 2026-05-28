@@ -2,6 +2,45 @@
 
 TL;DR: The codebase already has a solid device registry, a working Siemens M60 SNMP driver, and a clean state/service split. The next useful pass is to remove duplicated state orchestration, reduce SNMP request volume and retry noise, and then add capability-driven paths for RTSP video and schema-based NTCIP commands so dynamic message signs can be added without overloading the controller polling path.
 
+Current state: Phase 0 is complete, Phase 1 is complete, Phase 2 is complete for the current polling scope, Phase 3 is complete for the current media-health scope, and Phase 4 is in progress. Within Phase 4, Phase 4a, Phase 4b, Phase 4c, and Phase 4d are complete; Phase 4e is the next active target.
+
+## Current Execution Board
+
+Use this as the active whole-roadmap board and update status markers when a phase milestone lands.
+
+Status markers: `[ ]` not started, `[~]` in progress, `[x]` complete.
+
+### Foundations Landed
+
+- [x] Phase 0 baseline telemetry and polling analysis
+- [x] Phase 1 state and service deduplication for selected-controller and profile flows
+- [x] Phase 2 polling efficiency and reliability work for batching, coalescing, and offline backoff
+- [x] Phase 3 RTSP/media health foundation and selected-controller media status exposure
+
+### Active Command Track
+
+- [x] Phase 4a bounded traffic-signal command catalog centralization
+- [x] Phase 4b vendor-agnostic command capability exposure through the existing device seam
+- [x] Phase 4c JSON-safe value-type and option-hint metadata for the current traffic-signal commands
+- [x] Phase 4d let the existing control-panel path consume capability hints for labels or visibility without replacing the wrapper-based command handlers
+- [ ] Phase 4e add acknowledgment and multi-step command lifecycle support
+- [ ] Phase 4f land the first DMS-targeted schema and driver path behind a vendor-agnostic device-family boundary
+
+### Validation Track
+
+- [x] Focused request-count and regression coverage for the shipped polling optimization work
+- [x] Fast Reflex compile gate for state and component refactors
+- [~] Extend validation to cover RTSP simulator or sample-stream verification
+- [ ] Add DMS-style command-schema and acknowledgment validation
+
+### Current Operating Snapshot
+
+- Baseline report: `docs/polling-rtsp-dms-phase0-baseline.md`
+- Warm traffic-signal polls currently resolve to 44 OID objects and 5 SNMP round trips in the Siemens M60 driver path.
+- Warm end-to-end snapshots currently resolve to 46 OID objects and 6 SNMP round trips through `PollingService.collect_snapshot`.
+- Overlapping same-key snapshot requests are coalesced to one underlying connect/poll cycle.
+- Repeated offline controllers back off and return stale/backoff metadata instead of immediately starting more SNMP work.
+
 ## Steps
 
 1. Phase 0 - Establish the baseline.
@@ -38,9 +77,10 @@ TL;DR: The codebase already has a solid device registry, a working Siemens M60 S
 
 5. Phase 4 - Generalize NTCIP command support for controllers and dynamic message signs.
    - Move command validation into a schema and capability layer so commands know their parameters, confirmation rules, and writable state before execution.
-   - Keep SiemensM60.command as one implementation of the broader command framework rather than the framework itself.
+   - Keep SiemensM60.command as one traffic-signal implementation of the broader command framework rather than the framework itself.
+   - Model Phase 4 around vendor-agnostic NTCIP device families and capability contracts first, then map Skyline, Daktronics, and other DMS vendors onto that contract instead of treating any traffic-signal controller as the default.
    - Add multi-step command support for unlock, apply, confirm, and rollback flows because DMS devices will need transaction-like behavior.
-   - Introduce a dedicated DMS driver and keep its object definitions or vendor profile separate from the signal-controller OIDs.
+   - Introduce a dedicated DMS driver boundary and keep its object definitions or vendor profile separate from the signal-controller OIDs.
    - Choose the first DMS vendor or emulator and whether the schema should live in Pydantic models, driver capability metadata, or both before implementation starts.
    - Add post-command acknowledgment polling so the UI can distinguish sent, accepted, and confirmed states.
    - Extend the command tests to cover schema validation and at least one confirm or timeout path for a representative controller target.
@@ -80,7 +120,8 @@ TL;DR: The codebase already has a solid device registry, a working Siemens M60 S
 
 ## Decisions
 
-- Keep the Siemens M60 signal-controller path as the baseline implementation and add new device families behind the existing registry instead of rewriting the device model.
+- Keep the Siemens M60 path as the current traffic-signal reference implementation only; do not treat it as the default controller model for other signal-controller vendors, DMS, video detection, or other ITS hardware domains.
+- Model new ITS hardware by vendor-agnostic NTCIP device family and capability contract first, then map vendor-specific implementations behind that boundary, including multiple traffic-signal vendors such as Yunex/Siemens and Econolite.
 - Separate video streaming and detection from SNMP polling cadence; do not run frame decode inside the controller poll loop.
 - Treat DMS as a distinct NTCIP device family with schema-driven commands and explicit confirmation rules.
 - Optimize request volume and retry behavior before expanding the amount of data each poll collects.
