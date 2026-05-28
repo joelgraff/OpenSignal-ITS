@@ -1,4 +1,4 @@
-"""RTSP URL parsing, redaction, and conservative reachability helpers."""
+"""RTSP URL parsing, redaction, conservative reachability, and bounded DESCRIBE helpers."""
 
 from __future__ import annotations
 
@@ -10,11 +10,31 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 from ..models.media import MediaProbeResult, RtspStreamEndpoint
 
 DEFAULT_RTSP_PORT = 554
+MAX_RTSP_HEADER_BYTES = 8192
 SUPPORTED_RTSP_SCHEMES = {"rtsp"}
 
 
 class RtspUrlValidationError(ValueError):
     """Raised when a media stream URL is not a valid RTSP endpoint."""
+
+
+class RtspDescribeError(RuntimeError):
+    """Raised when a bounded RTSP DESCRIBE probe cannot parse a valid response."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        status_reason: str = "",
+        status_line: str = "",
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.status_reason = status_reason
+        self.status_line = status_line
+        self.headers = dict(headers or {})
 
 
 def _format_host(host: str) -> str:
@@ -41,6 +61,39 @@ def _build_safe_rtsp_url(parts: SplitResult, port: int | None) -> str:
     path = parts.path or ""
     query = parts.query or ""
     return urlunsplit((scheme, _safe_netloc(parts, port), path, query, ""))
+
+
+def _build_request_uri(endpoint: RtspStreamEndpoint) -> str:
+    path_with_query = endpoint.path_with_query or endpoint.path or "/"
+    if not path_with_query.startswith("/"):
+        path_with_query = f"/{path_with_query}"
+    return f"{endpoint.scheme}://{_format_host(endpoint.host)}:{endpoint.port}{path_with_query}"
+
+
+def _parse_rtsp_response_head(response_head: bytes) -> tuple[str, int, str, dict[str, str]]:
+    header_text = response_head.decode("utf-8", errors="replace").split("\r\n\r\n", 1)[0]
+    lines = header_text.split("\r\n")
+    if not lines or not lines[0].startswith("RTSP/"):
+        raise RtspDescribeError("Malformed RTSP DESCRIBE response status line.")
+
+    status_parts = lines[0].split(" ", 2)
+    if len(status_parts) < 2:
+        raise RtspDescribeError("Malformed RTSP DESCRIBE response status line.")
+    try:
+        status_code = int(status_parts[1])
+    except ValueError as exc:
+        raise RtspDescribeError("Malformed RTSP DESCRIBE response status line.") from exc
+
+    reason = status_parts[2].strip() if len(status_parts) > 2 else ""
+    headers: dict[str, str] = {}
+    for line in lines[1:]:
+        if not line:
+            continue
+        if ":" not in line:
+            raise RtspDescribeError("Malformed RTSP DESCRIBE response header.")
+        name, value = line.split(":", 1)
+        headers[name.strip().lower()] = value.strip()
+    return lines[0], status_code, reason, headers
 
 
 def redact_rtsp_url(raw_url: str) -> str:
@@ -174,3 +227,91 @@ async def probe_rtsp_tcp(endpoint: RtspStreamEndpoint, timeout_seconds: float) -
             "scheme": endpoint.scheme,
         },
     )
+
+
+async def probe_rtsp_describe(endpoint: RtspStreamEndpoint, timeout_seconds: float) -> MediaProbeResult:
+    started = perf_counter()
+    timeout = float(timeout_seconds)
+    if timeout <= 0:
+        timeout = 0.001
+
+    reader, writer = await asyncio.wait_for(
+        asyncio.open_connection(endpoint.host, endpoint.port),
+        timeout=timeout,
+    )
+    request_uri = _build_request_uri(endpoint)
+    request = (
+        f"DESCRIBE {request_uri} RTSP/1.0\r\n"
+        "CSeq: 1\r\n"
+        "Accept: application/sdp\r\n"
+        "\r\n"
+    ).encode("utf-8")
+
+    try:
+        writer.write(request)
+        await asyncio.wait_for(writer.drain(), timeout=timeout)
+        try:
+            response_head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=timeout)
+        except asyncio.IncompleteReadError as exc:
+            raise RtspDescribeError("Incomplete RTSP DESCRIBE response headers.") from exc
+
+        if len(response_head) > MAX_RTSP_HEADER_BYTES:
+            raise RtspDescribeError("RTSP DESCRIBE response headers were too large.")
+
+        status_line, status_code, reason, headers = _parse_rtsp_response_head(response_head)
+        if status_code < 200 or status_code >= 300:
+            detail = f"{status_code} {reason}".strip()
+            raise RtspDescribeError(
+                f"RTSP DESCRIBE failed with status {detail}.",
+                status_code=status_code,
+                status_reason=reason,
+                status_line=status_line,
+                headers=headers,
+            )
+
+        content_length = 0
+        raw_content_length = headers.get("content-length", "").strip()
+        if raw_content_length:
+            try:
+                content_length = int(raw_content_length)
+            except ValueError as exc:
+                raise RtspDescribeError("Malformed RTSP DESCRIBE content-length header.") from exc
+            if content_length < 0:
+                raise RtspDescribeError("Malformed RTSP DESCRIBE content-length header.")
+
+        response_body = b""
+        if content_length:
+            try:
+                response_body = await asyncio.wait_for(reader.readexactly(content_length), timeout=timeout)
+            except asyncio.IncompleteReadError as exc:
+                raise RtspDescribeError("Incomplete RTSP DESCRIBE response body.") from exc
+
+        body_text = response_body.decode("utf-8", errors="replace")
+        content_type = headers.get("content-type", "")
+        latency_ms = round((perf_counter() - started) * 1000.0, 3)
+        return MediaProbeResult(
+            is_online=True,
+            status_text="RTSP DESCRIBE succeeded",
+            latency_ms=latency_ms,
+            raw_data={
+                "status_line": status_line,
+                "body_preview": body_text[:200],
+            },
+            extra={
+                "transport": "tcp",
+                "scheme": endpoint.scheme,
+                "probe": "describe",
+                "describe_uri": request_uri,
+                "status_code": status_code,
+                "status_reason": reason,
+                "content_type": content_type,
+                "content_length": content_length,
+                "has_sdp": content_type.lower().startswith("application/sdp") or body_text.lstrip().startswith("v="),
+            },
+        )
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass

@@ -18,6 +18,8 @@ _COMMAND_LIFECYCLE_LABELS = {
     "confirmation_rejected": "Confirmation Rejected",
     "executing": "Executing",
     "applied": "Applied",
+    "verified": "Verified",
+    "timed_out": "Timed Out",
     "failed": "Failed",
 }
 

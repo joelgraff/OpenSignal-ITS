@@ -20,6 +20,21 @@ class FleetServiceTests(unittest.TestCase):
         self.assertEqual(-75.0, profiles[0]["longitude"])
         self.assertEqual([], profiles[0]["media_streams"])
 
+    def test_parse_profiles_json_preserves_explicit_dms_device_type(self):
+        raw = '[{"device_id":"dms-1","device_type":"skyline_dms_emulator","ip_address":"10.0.1.20"}]'
+
+        profiles = FleetService.parse_profiles_json(raw)
+        device_type, device_id, config = FleetService.resolve_target(
+            profiles,
+            selected_device_id="dms-1",
+            fallback_config=DeviceConfig(ip_address="10.0.9.99"),
+        )
+
+        self.assertEqual("skyline_dms_emulator", profiles[0]["device_type"])
+        self.assertEqual("skyline_dms_emulator", device_type)
+        self.assertEqual("dms-1", device_id)
+        self.assertEqual("10.0.1.20", config.ip_address)
+
     def test_parse_profiles_json_normalizes_media_streams(self):
         raw = """[
             {

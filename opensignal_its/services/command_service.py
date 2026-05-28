@@ -85,6 +85,29 @@ class CommandService:
 
         if success:
             payload = (await device.poll()).model_dump(mode="json")
+            verification = getattr(definition, "verify_poll_payload", None)
+            if callable(verification) and not safe_command_probe:
+                verified, verification_error = verification(normalized_value, payload)
+                if not verified:
+                    error = verification_error.strip() or f"Post-command verification failed: {cmd_type}"
+                    return CommandExecutionResult(
+                        success=False,
+                        payload=payload,
+                        mp_model=getattr(device, "_mp_model", mp_model),
+                        error=error,
+                        lifecycle_stage=definition.verification_failure_stage,
+                        lifecycle_notice=error,
+                        acknowledged=True,
+                    )
+                return CommandExecutionResult(
+                    success=True,
+                    payload=payload,
+                    mp_model=getattr(device, "_mp_model", mp_model),
+                    error="",
+                    lifecycle_stage="verified",
+                    lifecycle_notice="Command verified.",
+                    acknowledged=True,
+                )
             return CommandExecutionResult(
                 success=True,
                 payload=payload,

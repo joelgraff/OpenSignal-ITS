@@ -1,5 +1,6 @@
 # base.py 
 from abc import ABC, abstractmethod
+from importlib import import_module
 from typing import Any, ClassVar
 import asyncio
 from ..models.device import DeviceStatus, DeviceConfig
@@ -27,11 +28,28 @@ class Device(ABC):
             Device._registry[cls.device_type.lower()] = cls
 
     @classmethod
+    def _ensure_registered(cls, device_type: str) -> str:
+        normalized_type = str(device_type).strip().lower()
+        if not normalized_type or normalized_type in cls._registry:
+            return normalized_type
+
+        module_name = normalized_type.replace("-", "_")
+        import_path = f"{__package__}.{module_name}"
+        try:
+            import_module(import_path)
+        except ModuleNotFoundError as exc:
+            if exc.name != import_path:
+                raise
+
+        return normalized_type
+
+    @classmethod
     def create(cls, device_type: str, config: DeviceConfig) -> "Device":
         """Factory method to create devices."""
-        if device_type.lower() not in cls._registry:
+        normalized_type = cls._ensure_registered(device_type)
+        if normalized_type not in cls._registry:
             raise ValueError(f"Unknown device type: {device_type}")
-        return cls._registry[device_type.lower()](config)
+        return cls._registry[normalized_type](config)
 
     @classmethod
     def registered_types(cls) -> list[str]:

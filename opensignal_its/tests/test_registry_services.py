@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime, timezone
 from tempfile import TemporaryDirectory
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from opensignal_its.devices.base import Device
 from opensignal_its.devices.siemens_m60 import SiemensM60
@@ -145,6 +145,83 @@ class RegistryServicesTests(unittest.TestCase):
         self.assertEqual("Command applied.", result.lifecycle_notice)
         self.assertTrue(result.acknowledged)
 
+    def test_command_service_select_pattern_reports_verified_lifecycle_when_poll_matches(self):
+        config = DeviceConfig(ip_address="10.0.0.1", name="M60")
+        device = SiemensM60(config)
+        verified_status = DeviceStatus(
+            device_id="int-1",
+            is_online=True,
+            status_text="Online - Pattern 2, Unit normal",
+            raw_data={"current_pattern": "2", "unit_status": "normal"},
+            extra={},
+            errors=[],
+        )
+
+        with patch(
+            "opensignal_its.services.command_service.RUNTIME.get_or_create",
+            return_value=("siemens_m60::int-1", device),
+        ), patch.object(device, "connect", new=AsyncMock(return_value=True)), patch.object(
+            device,
+            "command",
+            new=AsyncMock(return_value=True),
+        ), patch.object(device, "poll", new=AsyncMock(return_value=verified_status)):
+            result = asyncio.run(
+                CommandService.execute_command_result(
+                    device_type="siemens_m60",
+                    config=config,
+                    cmd_type="select_pattern",
+                    value=2,
+                    safe_command_probe=False,
+                    device_id="int-1",
+                )
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual("verified", result.lifecycle_stage)
+        self.assertEqual("Command verified.", result.lifecycle_notice)
+        self.assertTrue(result.acknowledged)
+        self.assertEqual("2", result.payload["raw_data"]["current_pattern"])
+
+    def test_command_service_select_pattern_reports_timed_out_when_poll_mismatches(self):
+        config = DeviceConfig(ip_address="10.0.0.1", name="M60")
+        device = SiemensM60(config)
+        stale_status = DeviceStatus(
+            device_id="int-1",
+            is_online=True,
+            status_text="Online - Pattern 1, Unit normal",
+            raw_data={"current_pattern": "1", "unit_status": "normal"},
+            extra={},
+            errors=[],
+        )
+
+        with patch(
+            "opensignal_its.services.command_service.RUNTIME.get_or_create",
+            return_value=("siemens_m60::int-1", device),
+        ), patch.object(device, "connect", new=AsyncMock(return_value=True)), patch.object(
+            device,
+            "command",
+            new=AsyncMock(return_value=True),
+        ), patch.object(device, "poll", new=AsyncMock(return_value=stale_status)):
+            result = asyncio.run(
+                CommandService.execute_command_result(
+                    device_type="siemens_m60",
+                    config=config,
+                    cmd_type="select_pattern",
+                    value=2,
+                    safe_command_probe=False,
+                    device_id="int-1",
+                )
+            )
+
+        self.assertFalse(result.success)
+        self.assertEqual("timed_out", result.lifecycle_stage)
+        self.assertTrue(result.acknowledged)
+        self.assertEqual(
+            "Post-command verification timed out: requested traffic-signal pattern did not appear after poll.",
+            result.error,
+        )
+        self.assertEqual("1", result.payload["raw_data"]["current_pattern"])
+
     def test_command_service_returns_unknown_command_error(self):
         config = DeviceConfig(ip_address="10.0.0.1", name="Fake")
 
@@ -276,6 +353,127 @@ class RegistryServicesTests(unittest.TestCase):
         self.assertEqual([True, False], manual_hold["allowed_values"])
         self.assertFalse(advance_phase["requires_value"])
         self.assertEqual("none", advance_phase["value_type"])
+
+    def test_device_registry_supports_skyline_dms_emulator_capabilities(self):
+        config = DeviceConfig(ip_address="10.0.1.20", name="Skyline DMS")
+
+        device = Device.create("skyline_dms_emulator", config)
+        capabilities = json.loads(json.dumps(device.get_capabilities()))
+        command_capabilities = capabilities["command_capabilities"]
+
+        self.assertEqual("SkylineDmsEmulator", device.__class__.__name__)
+        self.assertIn("skyline_dms_emulator", Device.registered_types())
+        self.assertEqual("dynamic_message_sign", capabilities["device_family"])
+        self.assertEqual("ntcip", capabilities["protocol_family"])
+        self.assertEqual(["set_message"], [item["command_id"] for item in command_capabilities])
+        self.assertEqual("object", command_capabilities[0]["value_type"])
+        self.assertEqual(
+            {
+                "type": "object",
+                "required": ["message"],
+                "properties": {
+                    "message": {"type": "string", "min_length": 1, "max_length": 120},
+                    "activate_plan": {"type": "boolean"},
+                },
+            },
+            command_capabilities[0]["value_schema"],
+        )
+
+    def test_command_service_execute_command_result_applies_dms_message(self):
+        config = DeviceConfig(ip_address="10.0.1.20", name="Skyline DMS")
+
+        result = asyncio.run(
+            CommandService.execute_command_result(
+                device_type="skyline_dms_emulator",
+                config=config,
+                cmd_type="set_message",
+                value={"message": "ROAD WORK AHEAD", "activate_plan": True},
+                safe_command_probe=False,
+                device_id="dms-1",
+            )
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual("verified", result.lifecycle_stage)
+        self.assertEqual("Command verified.", result.lifecycle_notice)
+        self.assertTrue(result.acknowledged)
+        self.assertEqual("ROAD WORK AHEAD", result.payload["raw_data"]["active_message"])
+        self.assertTrue(result.payload["raw_data"]["message_plan_active"])
+        self.assertEqual("Skyline DMS emulator", result.payload["extra"]["dms"]["target"])
+        self.assertEqual("verified", result.payload["extra"]["dms"]["verification_outcome"])
+
+    def test_command_service_validates_dms_message_schema(self):
+        config = DeviceConfig(ip_address="10.0.1.20", name="Skyline DMS")
+
+        result = asyncio.run(
+            CommandService.execute_command_result(
+                device_type="skyline_dms_emulator",
+                config=config,
+                cmd_type="set_message",
+                value={"message": "   ", "activate_plan": True},
+                safe_command_probe=False,
+                device_id="dms-1",
+            )
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual("failed", result.lifecycle_stage)
+        self.assertEqual("set_message message is required.", result.error)
+        self.assertFalse(result.acknowledged)
+
+    def test_command_service_reports_failed_dms_verification_mismatch(self):
+        config = DeviceConfig(ip_address="10.0.1.20", name="Skyline DMS")
+        device = Device.create("skyline_dms_emulator", config)
+        device._verification_mode = "activation_mismatch"
+
+        with patch(
+            "opensignal_its.services.command_service.RUNTIME.get_or_create",
+            return_value=("skyline_dms_emulator::dms-1", device),
+        ):
+            result = asyncio.run(
+                CommandService.execute_command_result(
+                    device_type="skyline_dms_emulator",
+                    config=config,
+                    cmd_type="set_message",
+                    value={"message": "ROAD WORK AHEAD", "activate_plan": True},
+                    safe_command_probe=False,
+                    device_id="dms-1",
+                )
+            )
+
+        self.assertFalse(result.success)
+        self.assertEqual("failed", result.lifecycle_stage)
+        self.assertTrue(result.acknowledged)
+        self.assertEqual(
+            "Post-command verification failed: DMS activation state did not match the requested value.",
+            result.error,
+        )
+        self.assertFalse(result.payload["raw_data"]["message_plan_active"])
+        self.assertEqual("mismatch", result.payload["extra"]["dms"]["verification_outcome"])
+
+    def test_command_service_reports_failed_dms_lifecycle_when_driver_rejects(self):
+        config = DeviceConfig(ip_address="10.0.1.20", name="Skyline DMS")
+        device = Device.create("skyline_dms_emulator", config)
+
+        with patch(
+            "opensignal_its.services.command_service.RUNTIME.get_or_create",
+            return_value=("skyline_dms_emulator::dms-1", device),
+        ), patch.object(device, "command", new=AsyncMock(return_value=False)):
+            result = asyncio.run(
+                CommandService.execute_command_result(
+                    device_type="skyline_dms_emulator",
+                    config=config,
+                    cmd_type="set_message",
+                    value={"message": "ROAD WORK AHEAD", "activate_plan": True},
+                    safe_command_probe=False,
+                    device_id="dms-1",
+                )
+            )
+
+        self.assertFalse(result.success)
+        self.assertEqual("failed", result.lifecycle_stage)
+        self.assertEqual("Failed to apply DMS message.", result.error)
+        self.assertFalse(result.acknowledged)
 
     def test_runtime_reuses_same_device_instance(self):
         config = DeviceConfig(ip_address="10.0.0.1", name="Fake")

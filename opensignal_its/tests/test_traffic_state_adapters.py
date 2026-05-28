@@ -627,6 +627,66 @@ class TrafficStateAdapterTests(unittest.TestCase):
             probe.selected_controller_command_notice,
         )
 
+    def test_monitor_state_preserves_dms_value_schema_in_capabilities(self):
+        probe = self._make_monitor_media_probe(
+            """[
+                {
+                    "device_id": "dms-1",
+                    "device_type": "skyline_dms_emulator",
+                    "ip_address": "10.0.1.20"
+                }
+            ]"""
+        )
+
+        value_schema = {
+            "type": "object",
+            "required": ["message"],
+            "properties": {
+                "message": {"type": "string", "min_length": 1, "max_length": 120},
+                "activate_plan": {"type": "boolean"},
+            },
+        }
+
+        class _CapabilityDevice:
+            def get_capabilities(self):
+                return {
+                    "device_family": "dynamic_message_sign",
+                    "protocol_family": "ntcip",
+                    "command_capabilities": [
+                        {
+                            "command_id": "set_message",
+                            "requires_confirmation": True,
+                            "requires_value": True,
+                            "value_type": "object",
+                            "value_schema": value_schema,
+                        }
+                    ],
+                }
+
+        with patch(
+            "opensignal_its.states.monitor_state.Device.create",
+            return_value=_CapabilityDevice(),
+        ):
+            probe.update_selected_device_id("dms-1")
+
+        self.assertEqual(1, len(probe.selected_controller_command_capabilities))
+        self.assertEqual(
+            "set_message",
+            probe.selected_controller_command_capabilities[0]["command_id"],
+        )
+        self.assertEqual(
+            value_schema,
+            probe.selected_controller_command_capabilities[0]["value_schema"],
+        )
+        self.assertFalse(probe.selected_controller_supports_select_pattern)
+        self.assertFalse(probe.selected_controller_supports_set_mode)
+        self.assertEqual([], probe.selected_controller_pattern_action_rows)
+        self.assertEqual([], probe.selected_controller_mode_action_rows)
+        self.assertEqual(
+            "1 command capability available for dms-1.",
+            probe.selected_controller_command_notice,
+        )
+
     def test_monitor_state_command_capability_unsupported_shape_returns_clear_empty_state(self):
         probe = self._make_monitor_media_probe(
             """[
@@ -1696,6 +1756,86 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertTrue(probe.selected_controller_command_lifecycle["acknowledged"])
         self.assertTrue(probe.selected_controller_command_lifecycle["is_terminal"])
         self.assertIn("Applied:", probe.selected_controller_command_lifecycle_notice)
+
+    def test_command_state_send_command_preserves_verified_lifecycle_stage(self):
+        probe = self._make_command_status_probe()
+        probe.status_log_calls = []
+        probe.write_unlock_until = probe._utc_future_iso(60)
+        payload = {
+            "is_online": True,
+            "timestamp": "2026-05-27T00:00:03+00:00",
+            "raw_data": {"active_message": "ROAD WORK AHEAD", "message_plan_active": True},
+            "extra": {"dms": {"verification_outcome": "verified"}},
+            "errors": [],
+        }
+
+        async def _fake_execute_command_result(device_type, config, cmd_type, value, safe_command_probe, device_id=""):
+            return CommandExecutionResult(
+                success=True,
+                payload=payload,
+                mp_model=1,
+                error="",
+                lifecycle_stage="verified",
+                lifecycle_notice="Command verified.",
+                acknowledged=True,
+            )
+
+        with patch("opensignal_its.states.command_state.uuid4", return_value=type("_Uuid", (), {"hex": "corr-789"})()), patch(
+            "opensignal_its.states.command_state.CommandService.execute_command_result",
+            side_effect=_fake_execute_command_result,
+        ) as execute_command_result, patch(
+            "opensignal_its.states.command_state.STORE.log_command",
+        ):
+            asyncio.run(probe.send_command("set_message", {"message": "ROAD WORK AHEAD", "activate_plan": True}))
+
+        execute_command_result.assert_awaited_once()
+        self.assertEqual("verified", probe.selected_controller_command_lifecycle["stage"])
+        self.assertEqual("set_message", probe.selected_controller_command_lifecycle["command_id"])
+        self.assertEqual("corr-789", probe.selected_controller_command_lifecycle["correlation_id"])
+        self.assertTrue(probe.selected_controller_command_lifecycle["acknowledged"])
+        self.assertTrue(probe.selected_controller_command_lifecycle["is_terminal"])
+        self.assertIn("Verified:", probe.selected_controller_command_lifecycle_notice)
+
+    def test_command_state_send_command_preserves_timed_out_lifecycle_stage(self):
+        probe = self._make_command_status_probe()
+        probe.status_text = "previous"
+        probe.status_log_calls = []
+        probe.write_unlock_until = probe._utc_future_iso(60)
+        payload = {
+            "is_online": True,
+            "status_text": "Online - Pattern 1, Unit normal",
+            "timestamp": "2026-05-27T00:00:04+00:00",
+            "raw_data": {"current_pattern": "1", "unit_status": "normal"},
+            "extra": {},
+            "errors": [],
+        }
+
+        async def _fake_execute_command_result(device_type, config, cmd_type, value, safe_command_probe, device_id=""):
+            return CommandExecutionResult(
+                success=False,
+                payload=payload,
+                mp_model=1,
+                error="Post-command verification timed out: requested traffic-signal pattern did not appear after poll.",
+                lifecycle_stage="timed_out",
+                lifecycle_notice="Post-command verification timed out: requested traffic-signal pattern did not appear after poll.",
+                acknowledged=True,
+            )
+
+        with patch("opensignal_its.states.command_state.uuid4", return_value=type("_Uuid", (), {"hex": "corr-790"})()), patch(
+            "opensignal_its.states.command_state.CommandService.execute_command_result",
+            side_effect=_fake_execute_command_result,
+        ) as execute_command_result, patch(
+            "opensignal_its.states.command_state.STORE.log_command",
+        ):
+            asyncio.run(probe.send_command("select_pattern", 2))
+
+        execute_command_result.assert_awaited_once()
+        self.assertEqual("timed_out", probe.selected_controller_command_lifecycle["stage"])
+        self.assertEqual("select_pattern", probe.selected_controller_command_lifecycle["command_id"])
+        self.assertEqual("corr-790", probe.selected_controller_command_lifecycle["correlation_id"])
+        self.assertTrue(probe.selected_controller_command_lifecycle["acknowledged"])
+        self.assertTrue(probe.selected_controller_command_lifecycle["is_terminal"])
+        self.assertIn("Timed Out:", probe.selected_controller_command_lifecycle_notice)
 
     def test_command_state_send_command_failure_keeps_failure_branch_behavior(self):
         probe = self._make_command_status_probe()

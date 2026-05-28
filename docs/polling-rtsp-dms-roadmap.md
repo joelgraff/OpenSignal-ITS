@@ -2,7 +2,14 @@
 
 TL;DR: The codebase already has a solid device registry, a working Siemens M60 SNMP driver, and a clean state/service split. The next useful pass is to remove duplicated state orchestration, reduce SNMP request volume and retry noise, and then add capability-driven paths for RTSP video and schema-based NTCIP commands so dynamic message signs can be added without overloading the controller polling path.
 
-Current state: Phase 0 is complete, Phase 1 is complete, Phase 2 is complete for the current polling scope, Phase 3 is complete for the current media-health scope, and Phase 4 is in progress. Within Phase 4, Phase 4a, Phase 4b, Phase 4c, and Phase 4d are complete; Phase 4e is the next active target.
+Current state: Phase 0 is complete, Phase 1 is complete, Phase 2 is complete for the current polling scope, Phase 3 is complete for the current media-health scope, and Phase 4 is complete for the current command-schema foundation scope. Phase 5 is complete for the current validation scope.
+
+Phase 4 exit criteria are now satisfied: commands advertise a schema and capability contract, and a first DMS-style command is validated before execution through the Skyline DMS emulator path.
+
+Current Phase 5 status: the Skyline DMS post-command verification target, one representative traffic-signal acknowledgment or timeout validation target, and RTSP simulator or sample-stream verification are complete.
+
+Post-Phase-5 bounded slice status: the RTSP protocol layer now has deterministic local DESCRIBE-response simulator coverage, including malformed-response and explicit non-2xx response handling, without adding playback, transcoding, or UI work.
+Post-Phase-5 bounded slice follow-up status: `MediaService` now exposes one additive service-level DESCRIBE consumer path with sanitized success and explicit non-2xx outcome metadata while leaving the default reachability path unchanged.
 
 ## Current Execution Board
 
@@ -23,15 +30,20 @@ Status markers: `[ ]` not started, `[~]` in progress, `[x]` complete.
 - [x] Phase 4b vendor-agnostic command capability exposure through the existing device seam
 - [x] Phase 4c JSON-safe value-type and option-hint metadata for the current traffic-signal commands
 - [x] Phase 4d let the existing control-panel path consume capability hints for labels or visibility without replacing the wrapper-based command handlers
-- [ ] Phase 4e add acknowledgment and multi-step command lifecycle support
-- [ ] Phase 4f land the first DMS-targeted schema and driver path behind a vendor-agnostic device-family boundary
+- [x] Phase 4e add acknowledgment and multi-step command lifecycle support
+- [x] Phase 4f land the first DMS-targeted schema and driver path behind a vendor-agnostic device-family boundary
+
+### Next Bounded Slice
+
+- [ ] If this DESCRIBE service path gets a real consumer later, wire one explicit caller to it without changing the default health path for every stream
 
 ### Validation Track
 
 - [x] Focused request-count and regression coverage for the shipped polling optimization work
 - [x] Fast Reflex compile gate for state and component refactors
-- [~] Extend validation to cover RTSP simulator or sample-stream verification
-- [ ] Add DMS-style command-schema and acknowledgment validation
+- [x] Extend validation to cover RTSP simulator or sample-stream verification
+- [x] Add DMS-style command-schema and acknowledgment validation
+- [x] Add representative traffic-signal acknowledgment or timeout validation
 
 ### Current Operating Snapshot
 

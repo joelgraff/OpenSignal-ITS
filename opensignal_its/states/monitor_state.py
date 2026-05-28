@@ -166,6 +166,12 @@ class MonitorStateMixin(rx.State, mixin=True):
                 if isinstance(raw_allowed_values, list)
                 else []
             )
+            raw_value_schema = item.get("value_schema")
+            normalized_value_schema = (
+                dict(raw_value_schema)
+                if isinstance(raw_value_schema, dict)
+                else {}
+            )
 
             normalized.append(
                 {
@@ -175,6 +181,7 @@ class MonitorStateMixin(rx.State, mixin=True):
                     "value_type": str(item.get("value_type", "")).strip(),
                     "allowed_values": normalized_allowed_values,
                     "options": normalized_options,
+                    "value_schema": normalized_value_schema,
                 }
             )
         return normalized
