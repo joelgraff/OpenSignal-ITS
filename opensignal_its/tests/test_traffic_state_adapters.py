@@ -434,6 +434,90 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual("Broadway & Pine", probe.fleet_unmapped_profile_rows[0]["title"])
         self.assertEqual("Coordinates not set", probe.fleet_unmapped_profile_rows[0]["coordinate_text"])
 
+    def test_fleet_state_refresh_fleet_status_applies_selected_payload_through_shared_helper(self):
+        probe = self._make_selected_status_probe()
+        payload = {
+            "is_online": True,
+            "status_text": "ok",
+            "timestamp": "2026-05-27T00:00:00+00:00",
+            "raw_data": {},
+            "extra": {},
+            "errors": [],
+        }
+        adapted = {
+            "selected_device_id": "int-1",
+            "fleet_status_by_id": {},
+            "fleet_device_rows": ["int-1 [siemens_m60] ONLINE - ok"],
+            "selected_payload": payload,
+            "selected_mp_model": 1,
+            "selected_device_type": "siemens_m60",
+        }
+
+        with patch(
+            "opensignal_its.states.fleet_state._fleet_view_to_state_fields",
+            return_value=adapted,
+        ), patch(
+            "opensignal_its.states.fleet_state.PollingService.sync_runtime_registry",
+        ) as sync_runtime_registry, patch.object(
+            type(probe),
+            "_apply_selected_status_result",
+            wraps=probe._apply_selected_status_result,
+        ) as apply_selected_status_result:
+            asyncio.run(probe.refresh_fleet_status())
+
+        apply_selected_status_result.assert_called_once_with("int-1", "siemens_m60", payload, 1)
+        self.assertEqual("int-1", probe.selected_device_id)
+        self.assertEqual(("int-1", "siemens_m60", payload), probe.cached_status)
+        self.assertTrue(probe.is_online)
+        self.assertEqual("ok", probe.status_text)
+        self.assertEqual("2026-05-27T00:00:00+00:00", probe.last_updated)
+        self.assertTrue(probe.refresh_cards_called)
+        self.assertTrue(probe.refresh_map_called)
+        self.assertTrue(probe.sync_rows_called)
+        self.assertTrue(probe.aggregate_refreshed)
+        self.assertTrue(probe.runtime_registry_refreshed)
+        self.assertIn("int-1", probe.fleet_status_by_id)
+        self.assertEqual("ok", probe.fleet_status_by_id["int-1"]["status_text"])
+        sync_runtime_registry.assert_called_once()
+
+    def test_fleet_state_refresh_fleet_status_uses_selected_status_fallback_without_selected_payload(self):
+        probe = self._make_selected_status_probe()
+        fallback_timestamp = "2026-05-27T00:00:01+00:00"
+        adapted = {
+            "selected_device_id": "int-1",
+            "fleet_status_by_id": {
+                "int-1": {
+                    "device_type": "siemens_m60",
+                    "is_online": True,
+                    "status_text": "Cached OK",
+                    "timestamp": fallback_timestamp,
+                }
+            },
+            "fleet_device_rows": ["int-1 [siemens_m60] ONLINE - Cached OK"],
+            "selected_payload": None,
+            "selected_mp_model": 1,
+            "selected_device_type": "siemens_m60",
+        }
+
+        with patch(
+            "opensignal_its.states.fleet_state._fleet_view_to_state_fields",
+            return_value=adapted,
+        ), patch(
+            "opensignal_its.states.fleet_state.PollingService.sync_runtime_registry",
+        ) as sync_runtime_registry:
+            asyncio.run(probe.refresh_fleet_status())
+
+        self.assertIsNone(probe.cached_status)
+        self.assertTrue(probe.is_online)
+        self.assertEqual("Cached OK", probe.status_text)
+        self.assertEqual(fallback_timestamp, probe.last_updated)
+        self.assertTrue(probe.refresh_cards_called)
+        self.assertTrue(probe.refresh_map_called)
+        self.assertTrue(probe.sync_rows_called)
+        self.assertTrue(probe.aggregate_refreshed)
+        self.assertTrue(probe.runtime_registry_refreshed)
+        sync_runtime_registry.assert_called_once()
+
     def test_monitor_state_build_config_normalizes_input(self):
         class _MonitorProbe(MonitorStateMixin, rx.State):
             ip_address: str = "166.156.88.223"
@@ -461,33 +545,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual(2, config.retries)
 
     def test_monitor_state_connect_uses_connection_status_path(self):
-        class _MonitorProbe(MonitorStateMixin, TimeStateMixin, rx.State):
-            auto_refresh_enabled: bool = False
-            auto_reconnect_enabled: bool = False
-            last_updated: str = ""
-            is_loading: bool = False
-            error: str = ""
-            cached_status: tuple[str, str, dict] | None = None
-
-            def _selected_device_target(self):
-                return (
-                    "siemens_m60",
-                    "int-1",
-                    type("_Config", (), {
-                        "ip_address": "10.0.0.1",
-                        "port": 161,
-                        "community": "public",
-                        "snmp_version": "v1",
-                        "timeout_seconds": 3.0,
-                        "retries": 1,
-                        "name": "Fake",
-                    })(),
-                )
-
-            def _cache_device_status(self, device_id: str, device_type: str, payload: dict):
-                self.cached_status = (device_id, device_type, payload)
-
-        probe = _MonitorProbe(_reflex_internal_init=True)
+        probe = self._make_selected_status_probe()
         payload = {
             "is_online": True,
             "status_text": "Connected via SNMP v1",
@@ -505,35 +563,267 @@ class TrafficStateAdapterTests(unittest.TestCase):
             side_effect=_fake_collect_connection_status,
         ) as collect_connection_status, patch(
             "opensignal_its.states.monitor_state.PollingService.collect_snapshot"
-        ) as collect_snapshot:
+        ) as collect_snapshot, patch.object(
+            type(probe),
+            "_apply_selected_status_result",
+            wraps=probe._apply_selected_status_result,
+        ) as apply_selected_status_result:
             asyncio.run(probe.connect_m60())
 
         collect_connection_status.assert_called_once()
         collect_snapshot.assert_not_called()
+        apply_selected_status_result.assert_called_once_with("int-1", "siemens_m60", payload, 0)
         self.assertTrue(probe.is_online)
         self.assertEqual("Connected via SNMP v1", probe.status_text)
         self.assertEqual(("int-1", "siemens_m60", payload), probe.cached_status)
 
-    def test_monitor_state_refreshes_after_row_selection(self):
-        class _MonitorRowProbe(MonitorStateMixin, rx.State):
+    def _make_selected_status_probe(self):
+        class _SelectedStatusProbe(MonitorStateMixin, FleetStateMixin, TimeStateMixin, rx.State):
+            device_profiles_json: str = """[
+                {
+                    "device_id": "int-1",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.1",
+                    "polling_enabled": false
+                }
+            ]"""
+            selected_device_id: str = "int-1"
+            auto_refresh_enabled: bool = False
+            auto_reconnect_enabled: bool = False
+            last_updated: str = ""
+            is_loading: bool = False
+            error: str = ""
+            m60_status: dict = {}
+            m60_status_json: str = ""
+            status_text: str = ""
+            active_snmp_version: str = "unknown"
+            is_online: bool = False
+            fleet_status_by_id: dict[str, object] = {}
+            fleet_status_cards: list[dict[str, str]] = []
+            fleet_device_rows: list[str] = []
+            fleet_status_mapping_filter: str = "all"
+            fleet_status_card_notice: str = ""
+            fleet_map_markers: list[dict[str, object]] = []
+            fleet_unmapped_device_ids: list[str] = []
+            fleet_unmapped_profile_rows: list[dict[str, str]] = []
+            fleet_map_data: list[dict[str, object]] = []
+            fleet_map_layout: dict[str, object] = {}
+            fleet_map_figure: dict[str, object] = {}
+            fleet_map_src_doc: str = ""
+            fleet_map_notice: str = ""
+            fleet_online_count: int = 0
+            fleet_offline_count: int = 0
+            fleet_total_count: int = 0
+            cached_status: tuple[str, str, dict] | None = None
+            refresh_cards_called: bool = False
+            refresh_map_called: bool = False
+            sync_rows_called: bool = False
+            aggregate_refreshed: bool = False
+            runtime_registry_refreshed: bool = False
+
+            def _selected_device_target(self):
+                return (
+                    "siemens_m60",
+                    "int-1",
+                    type(
+                        "_Config",
+                        (),
+                        {
+                            "ip_address": "10.0.0.1",
+                            "port": 161,
+                            "community": "public",
+                            "snmp_version": "v1",
+                            "timeout_seconds": 3.0,
+                            "retries": 1,
+                            "name": "Fake",
+                        },
+                    )(),
+                )
+
+            def _refresh_fleet_card_fields(self, profiles=None):
+                self.refresh_cards_called = True
+
+            def _refresh_fleet_map_fields(self, profiles=None):
+                self.refresh_map_called = True
+
+            def _sync_controller_profile_rows(self, notice: str = ""):
+                self.sync_rows_called = True
+
+            def _refresh_fleet_aggregate_fields(self):
+                self.aggregate_refreshed = True
+
+            def refresh_runtime_registry_status(self):
+                self.runtime_registry_refreshed = True
+
+            def _cache_device_status(self, device_id: str, device_type: str, payload: dict):
+                self.cached_status = (device_id, device_type, payload)
+                return super()._cache_device_status(device_id, device_type, payload)
+
+        return _SelectedStatusProbe(_reflex_internal_init=True)
+
+    def _make_monitor_selection_probe(self):
+        class _MonitorSelectionProbe(MonitorStateMixin, rx.State):
             selected_device_id: str = ""
             monitor_view: str = "dashboard"
+            fleet_map_markers: list[dict[str, object]] = []
             loaded_device_id: str = ""
+            close_called: bool = False
+            refresh_map_called: bool = False
             refresh_called: bool = False
 
             def load_controller_profile_from_row(self, device_id: str):
                 self.loaded_device_id = device_id
 
+            def close_controller_profile_creation_dialog(self):
+                self.close_called = True
+
+            def _refresh_fleet_map_fields(self):
+                self.refresh_map_called = True
+
             async def refresh_fleet_status(self):
                 self.refresh_called = True
 
-        probe = _MonitorRowProbe(_reflex_internal_init=True)
+        return _MonitorSelectionProbe(_reflex_internal_init=True)
+
+    def _make_command_status_probe(self):
+        class _CommandStatusProbe(CommandStateMixin, MonitorStateMixin, FleetStateMixin, TimeStateMixin, rx.State):
+            selected_device_id: str = "int-1"
+            safe_command_probe: bool = False
+            write_unlock_until: str = ""
+            write_mode_active: bool = False
+            safety_notice: str = ""
+            ip_address: str = "166.156.88.223"
+            is_loading: bool = False
+            error: str = ""
+            m60_status: dict = {}
+            m60_status_json: str = ""
+            status_text: str = ""
+            active_snmp_version: str = "unknown"
+            is_online: bool = False
+            last_updated: str = ""
+            fleet_status_by_id: dict[str, object] = {}
+            fleet_status_cards: list[dict[str, str]] = []
+            fleet_device_rows: list[str] = []
+            fleet_status_mapping_filter: str = "all"
+            fleet_status_card_notice: str = ""
+            fleet_map_markers: list[dict[str, object]] = []
+            fleet_unmapped_device_ids: list[str] = []
+            fleet_unmapped_profile_rows: list[dict[str, str]] = []
+            fleet_map_data: list[dict[str, object]] = []
+            fleet_map_layout: dict[str, object] = {}
+            fleet_map_figure: dict[str, object] = {}
+            fleet_map_src_doc: str = ""
+            fleet_map_notice: str = ""
+            fleet_online_count: int = 0
+            fleet_offline_count: int = 0
+            fleet_total_count: int = 0
+            cached_status: tuple[str, str, dict] | None = None
+            status_log_calls: list[tuple[str, str, dict]] = []
+
+            def _selected_device_target(self):
+                return (
+                    "siemens_m60",
+                    "int-1",
+                    type(
+                        "_Config",
+                        (),
+                        {
+                            "ip_address": "10.0.0.1",
+                            "port": 161,
+                            "community": "public",
+                            "snmp_version": "v1",
+                            "timeout_seconds": 3.0,
+                            "retries": 1,
+                            "name": "Fake",
+                        },
+                    )(),
+                )
+
+            def _is_role_authorized(self, allowed_roles):
+                return True
+
+            def _requires_confirmation(self, cmd_type):
+                return False
+
+            def _actor_name(self):
+                return "operator"
+
+            def _safe_log_status_snapshot(self, payload: dict, correlation_id: str = "", source: str = "poll"):
+                self.status_log_calls.append((correlation_id, source, dict(payload)))
+
+            def _sync_controller_profile_rows(self, notice: str = ""):
+                return None
+
+            def _cache_device_status(self, device_id: str, device_type: str, payload: dict):
+                self.cached_status = (device_id, device_type, payload)
+                return super()._cache_device_status(device_id, device_type, payload)
+
+        return _CommandStatusProbe(_reflex_internal_init=True)
+
+    def test_monitor_state_add_and_poll_m60_routes_successful_result_through_shared_helper(self):
+        probe = self._make_selected_status_probe()
+        payload = {
+            "is_online": True,
+            "status_text": "polled",
+            "timestamp": "2026-05-27T00:00:00+00:00",
+            "raw_data": {},
+            "extra": {},
+            "errors": [],
+        }
+
+        async def _fake_collect_snapshot(device_type, config, device_id=""):
+            return payload, 1
+
+        with patch(
+            "opensignal_its.states.monitor_state.PollingService.collect_snapshot",
+            side_effect=_fake_collect_snapshot,
+        ) as collect_snapshot, patch.object(
+            type(probe),
+            "_apply_selected_status_result",
+            wraps=probe._apply_selected_status_result,
+        ) as apply_selected_status_result:
+            asyncio.run(probe.add_and_poll_m60())
+
+        collect_snapshot.assert_called_once()
+        apply_selected_status_result.assert_called_once_with("int-1", "siemens_m60", payload, 1)
+        self.assertEqual(("int-1", "siemens_m60", payload), probe.cached_status)
+        self.assertTrue(probe.is_online)
+        self.assertEqual("polled", probe.status_text)
+        self.assertEqual("v2c", probe.active_snmp_version)
+        self.assertEqual("", probe.error)
+        self.assertFalse(probe.is_loading)
+
+    def test_monitor_state_refreshes_after_row_selection(self):
+        probe = self._make_monitor_selection_probe()
 
         asyncio.run(probe.select_controller_from_row("int-2 | Broadway"))
 
         self.assertEqual("int-2", probe.loaded_device_id)
+        self.assertTrue(probe.close_called)
+        self.assertTrue(probe.refresh_map_called)
         self.assertTrue(probe.refresh_called)
         self.assertEqual("int-2", probe.selected_device_id)
+        self.assertEqual("intersection", probe.monitor_view)
+
+    def test_monitor_state_refreshes_after_map_point_selection(self):
+        probe = self._make_monitor_selection_probe()
+        probe.fleet_map_markers = [{"device_id": "int-7"}]
+
+        asyncio.run(
+            probe.select_controller_from_map_points(
+                [
+                    {
+                        "pointNumber": 0,
+                    }
+                ]
+            )
+        )
+
+        self.assertEqual("int-7", probe.loaded_device_id)
+        self.assertTrue(probe.close_called)
+        self.assertTrue(probe.refresh_map_called)
+        self.assertTrue(probe.refresh_called)
+        self.assertEqual("int-7", probe.selected_device_id)
         self.assertEqual("intersection", probe.monitor_view)
 
     def test_monitor_state_selects_controller_creation_point_from_map_click(self):
@@ -559,19 +849,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertEqual("Selected a map point. Click Add to open the controller dialog.", probe.controller_profile_notice)
 
     def test_monitor_state_refreshes_after_map_selection(self):
-        class _MonitorMapProbe(MonitorStateMixin, rx.State):
-            selected_device_id: str = ""
-            monitor_view: str = "dashboard"
-            loaded_device_id: str = ""
-            refresh_called: bool = False
-
-            def load_controller_profile_from_row(self, device_id: str):
-                self.loaded_device_id = device_id
-
-            async def refresh_fleet_status(self):
-                self.refresh_called = True
-
-        probe = _MonitorMapProbe(_reflex_internal_init=True)
+        probe = self._make_monitor_selection_probe()
 
         asyncio.run(
             probe.sync_map_selection_from_storage(
@@ -583,9 +861,25 @@ class TrafficStateAdapterTests(unittest.TestCase):
         )
 
         self.assertEqual("int-7", probe.loaded_device_id)
+        self.assertTrue(probe.close_called)
+        self.assertTrue(probe.refresh_map_called)
         self.assertTrue(probe.refresh_called)
         self.assertEqual("int-7", probe.selected_device_id)
         self.assertEqual("intersection", probe.monitor_view)
+
+    def test_monitor_state_ignores_blank_row_and_invalid_map_point_index(self):
+        probe = self._make_monitor_selection_probe()
+        probe.fleet_map_markers = [{"device_id": "int-7"}]
+
+        asyncio.run(probe.select_controller_from_row("   "))
+        asyncio.run(probe.select_controller_from_map_points([{"pointNumber": 1}]))
+
+        self.assertEqual("", probe.selected_device_id)
+        self.assertEqual("dashboard", probe.monitor_view)
+        self.assertEqual("", probe.loaded_device_id)
+        self.assertFalse(probe.close_called)
+        self.assertFalse(probe.refresh_map_called)
+        self.assertFalse(probe.refresh_called)
 
     def test_monitor_state_connect_and_start_polling_starts_managed_polling(self):
         class _MonitorConnectProbe(MonitorStateMixin, FleetStateMixin, PollingStateMixin, rx.State):
@@ -771,6 +1065,95 @@ class TrafficStateAdapterTests(unittest.TestCase):
         asyncio.run(probe.select_pattern_1())
 
         self.assertEqual([("select_pattern", 1, False)], probe.calls)
+
+    def test_command_state_send_command_routes_success_through_shared_helper(self):
+        probe = self._make_command_status_probe()
+        probe.status_log_calls = []
+        probe.write_unlock_until = probe._utc_future_iso(60)
+        payload = {
+            "is_online": True,
+            "timestamp": "2026-05-27T00:00:03+00:00",
+            "raw_data": {},
+            "extra": {},
+            "errors": [],
+        }
+
+        async def _fake_execute_command(device_type, config, cmd_type, value, safe_command_probe, device_id=""):
+            return True, payload, 1, ""
+
+        with patch("opensignal_its.states.command_state.uuid4", return_value=type("_Uuid", (), {"hex": "corr-123"})()), patch(
+            "opensignal_its.states.command_state.CommandService.execute_command",
+            side_effect=_fake_execute_command,
+        ) as execute_command, patch(
+            "opensignal_its.states.command_state.STORE.log_command",
+        ) as log_command, patch.object(
+            type(probe),
+            "_apply_selected_status_result",
+            wraps=probe._apply_selected_status_result,
+        ) as apply_selected_status_result:
+            asyncio.run(probe.send_command("set_mode", "free"))
+
+        execute_command.assert_awaited_once()
+        apply_selected_status_result.assert_called_once_with(
+            "int-1",
+            "siemens_m60",
+            payload,
+            1,
+            correlation_id="corr-123",
+            source="command",
+            status_text_default="Command applied",
+        )
+        log_command.assert_called_once()
+        command_audit = log_command.call_args.args[0]
+        self.assertEqual("corr-123", command_audit.correlation_id)
+        self.assertTrue(command_audit.allowed)
+        self.assertTrue(command_audit.success)
+        self.assertEqual("set_mode", command_audit.command_type)
+        self.assertEqual(("corr-123", "command", payload), probe.status_log_calls[0])
+        self.assertEqual(("int-1", "siemens_m60", payload), probe.cached_status)
+        self.assertEqual("Command applied", probe.status_text)
+        self.assertTrue(probe.is_online)
+        self.assertEqual("v2c", probe.active_snmp_version)
+        self.assertEqual("", probe.error)
+        self.assertEqual("", probe.m60_status.get("status_text", ""))
+
+    def test_command_state_send_command_failure_keeps_failure_branch_behavior(self):
+        probe = self._make_command_status_probe()
+        probe.status_text = "previous"
+        probe.status_log_calls = []
+        probe.write_unlock_until = probe._utc_future_iso(60)
+        payload = {
+            "is_online": False,
+            "status_text": "Command denied",
+            "timestamp": "2026-05-27T00:00:04+00:00",
+            "raw_data": {},
+            "extra": {},
+            "errors": [],
+        }
+
+        async def _fake_execute_command(device_type, config, cmd_type, value, safe_command_probe, device_id=""):
+            return False, payload, 1, "Command failed"
+
+        with patch("opensignal_its.states.command_state.uuid4", return_value=type("_Uuid", (), {"hex": "corr-456"})()), patch(
+            "opensignal_its.states.command_state.CommandService.execute_command",
+            side_effect=_fake_execute_command,
+        ) as execute_command, patch(
+            "opensignal_its.states.command_state.STORE.log_command",
+        ) as log_command, patch.object(
+            type(probe),
+            "_apply_selected_status_result",
+            wraps=probe._apply_selected_status_result,
+        ) as apply_selected_status_result:
+            asyncio.run(probe.send_command("set_mode", "free"))
+
+        execute_command.assert_awaited_once()
+        apply_selected_status_result.assert_not_called()
+        log_command.assert_called_once()
+        self.assertEqual("Command failed", probe.error)
+        self.assertFalse(probe.is_online)
+        self.assertEqual("previous", probe.status_text)
+        self.assertEqual(("int-1", "siemens_m60", payload), probe.cached_status)
+        self.assertEqual([], probe.status_log_calls)
 
     def test_fleet_state_interval_helpers_apply_bounds_and_fallbacks(self):
         class _FleetProbe(FleetStateMixin, rx.State):

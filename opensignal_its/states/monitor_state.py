@@ -94,23 +94,30 @@ class MonitorStateMixin(rx.State, mixin=True):
         if callable(refresh_map):
             refresh_map()
 
+    async def _select_controller_from_device_id(self, device_id: str):
+        normalized_device_id = str(device_id).strip()
+        if not normalized_device_id:
+            return
+
+        self.selected_device_id = normalized_device_id
+        self.monitor_view = "intersection"
+        load_profile = getattr(self, "load_controller_profile_from_row", None)
+        if callable(load_profile):
+            load_profile(normalized_device_id)
+        close_dialog = getattr(self, "close_controller_profile_creation_dialog", None)
+        if callable(close_dialog):
+            close_dialog()
+        refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
+        if callable(refresh_map):
+            refresh_map()
+        refresh_fleet_status = getattr(self, "refresh_fleet_status", None)
+        if callable(refresh_fleet_status):
+            await refresh_fleet_status()
+
     async def select_controller_from_row(self, row: str):
         tokenized = row.strip().split()
         if tokenized:
-            self.selected_device_id = tokenized[0]
-            self.monitor_view = "intersection"
-            load_profile = getattr(self, "load_controller_profile_from_row", None)
-            if callable(load_profile):
-                load_profile(self.selected_device_id)
-            close_dialog = getattr(self, "close_controller_profile_creation_dialog", None)
-            if callable(close_dialog):
-                close_dialog()
-            refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
-            if callable(refresh_map):
-                refresh_map()
-            refresh_fleet_status = getattr(self, "refresh_fleet_status", None)
-            if callable(refresh_fleet_status):
-                await refresh_fleet_status()
+            await self._select_controller_from_device_id(tokenized[0])
 
     async def select_controller_from_map_points(self, points: list[dict[str, Any]]):
         if not points:
@@ -130,20 +137,7 @@ class MonitorStateMixin(rx.State, mixin=True):
         if not device_id:
             return
 
-        self.selected_device_id = device_id
-        self.monitor_view = "intersection"
-        load_profile = getattr(self, "load_controller_profile_from_row", None)
-        if callable(load_profile):
-            load_profile(device_id)
-        close_dialog = getattr(self, "close_controller_profile_creation_dialog", None)
-        if callable(close_dialog):
-            close_dialog()
-        refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
-        if callable(refresh_map):
-            refresh_map()
-        refresh_fleet_status = getattr(self, "refresh_fleet_status", None)
-        if callable(refresh_fleet_status):
-            await refresh_fleet_status()
+        await self._select_controller_from_device_id(device_id)
 
     async def sync_map_selection_from_storage(
         self,
@@ -161,20 +155,7 @@ class MonitorStateMixin(rx.State, mixin=True):
             if not selected_device_id:
                 return
 
-            self.selected_device_id = selected_device_id
-            self.monitor_view = "intersection"
-            load_profile = getattr(self, "load_controller_profile_from_row", None)
-            if callable(load_profile):
-                load_profile(selected_device_id)
-            close_dialog = getattr(self, "close_controller_profile_creation_dialog", None)
-            if callable(close_dialog):
-                close_dialog()
-            refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
-            if callable(refresh_map):
-                refresh_map()
-            refresh_fleet_status = getattr(self, "refresh_fleet_status", None)
-            if callable(refresh_fleet_status):
-                await refresh_fleet_status()
+            await self._select_controller_from_device_id(selected_device_id)
             return
 
         if key != FleetService.MAP_CREATE_STORAGE_KEY:
@@ -292,12 +273,20 @@ class MonitorStateMixin(rx.State, mixin=True):
         )
         return device_id, device_type, payload, mp_model
 
-    def _apply_status_snapshot(self, status_payload: dict, mp_model: int):
+    def _apply_status_snapshot(
+        self,
+        status_payload: dict,
+        mp_model: int,
+        *,
+        correlation_id: str = "",
+        source: str = "poll",
+        status_text_default: str = "Unknown",
+    ):
         """Apply one status snapshot to state fields used by the UI."""
         previous_updated = self.last_updated
         self.m60_status = status_payload
         self.m60_status_json = json.dumps(self.m60_status, indent=2)
-        self.status_text = str(self.m60_status.get("status_text", "Unknown"))
+        self.status_text = str(self.m60_status.get("status_text", status_text_default))
         self.is_online = bool(self.m60_status.get("is_online", False))
         self.last_updated = str(self.m60_status.get("timestamp", ""))
         poll_delta_seconds = self._poll_delta_seconds(previous_updated, self.last_updated)
@@ -305,7 +294,7 @@ class MonitorStateMixin(rx.State, mixin=True):
         self.active_snmp_version = "v2c" if mp_model == 1 else "v1"
         errors = self.m60_status.get("errors", [])
         self.error = "; ".join(errors) if errors else ""
-        self._safe_log_status_snapshot(status_payload)
+        self._safe_log_status_snapshot(status_payload, correlation_id=correlation_id, source=source)
 
     def _safe_log_status_snapshot(
         self,
@@ -338,8 +327,7 @@ class MonitorStateMixin(rx.State, mixin=True):
                 self.status_text = "Input validation failed"
                 self.is_online = False
                 return
-            self._apply_status_snapshot(status_payload, mp_model)
-            self._cache_device_status(device_id, device_type, status_payload)
+            self._apply_selected_status_result(device_id, device_type, status_payload, mp_model)
         except Exception as exc:
             self.m60_status = {"error": f"Unhandled exception: {exc}"}
             self.m60_status_json = json.dumps(self.m60_status, indent=2)
@@ -363,8 +351,7 @@ class MonitorStateMixin(rx.State, mixin=True):
                 self.status_text = "Input validation failed"
                 self.is_online = False
                 return
-            self._apply_status_snapshot(status_payload, mp_model)
-            self._cache_device_status(device_id, device_type, status_payload)
+            self._apply_selected_status_result(device_id, device_type, status_payload, mp_model)
         except Exception as exc:
             self.m60_status = {"error": f"Unhandled exception: {exc}"}
             self.m60_status_json = json.dumps(self.m60_status, indent=2)

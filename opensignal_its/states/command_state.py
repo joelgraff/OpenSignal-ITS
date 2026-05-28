@@ -110,21 +110,15 @@ class CommandStateMixin(rx.State, mixin=True):
                 error=error,
             )
             if success:
-                self.m60_status = payload
-                self.m60_status_json = json.dumps(self.m60_status, indent=2)
-                self.status_text = str(self.m60_status.get("status_text", "Command applied"))
-                self.is_online = bool(self.m60_status.get("is_online", False))
-                self.last_updated = str(self.m60_status.get("timestamp", ""))
-                self._apply_phase_payload(self.m60_status)
-                self.active_snmp_version = "v2c" if mp_model == 1 else "v1"
-                errors = self.m60_status.get("errors", [])
-                self.error = "; ".join(errors) if errors else ""
-                self._safe_log_status_snapshot(
-                    self.m60_status,
+                self._apply_selected_status_result(
+                    device_id,
+                    device_type,
+                    payload,
+                    mp_model,
                     correlation_id=correlation_id,
                     source="command",
+                    status_text_default="Command applied",
                 )
-                self._cache_device_status(device_id, device_type, self.m60_status)
             else:
                 self.m60_status = payload
                 self.m60_status_json = json.dumps(self.m60_status, indent=2)

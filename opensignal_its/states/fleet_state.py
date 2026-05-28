@@ -225,6 +225,28 @@ class FleetStateMixin(rx.State, mixin=True):
         self._refresh_fleet_aggregate_fields()
         self._sync_controller_profile_rows()
 
+    def _apply_selected_status_result(
+        self,
+        device_id: str,
+        device_type: str,
+        status_payload: dict[str, Any],
+        mp_model: int,
+        *,
+        correlation_id: str = "",
+        source: str = "poll",
+        status_text_default: str = "Unknown",
+    ):
+        self._apply_status_snapshot(
+            status_payload,
+            mp_model,
+            correlation_id=correlation_id,
+            source=source,
+            status_text_default=status_text_default,
+        )
+        cache_device_status = getattr(self, "_cache_device_status", None)
+        if callable(cache_device_status):
+            cache_device_status(device_id, device_type, status_payload)
+
     async def refresh_fleet_status(self):
         async with POLLING_TELEMETRY.observe(
             "fleet::refresh",
@@ -329,14 +351,11 @@ class FleetStateMixin(rx.State, mixin=True):
 
                 selected_payload = adapted["selected_payload"]
                 if selected_payload is not None:
-                    self._apply_status_snapshot(
-                        dict(selected_payload),
-                        int(adapted["selected_mp_model"]),
-                    )
-                    self._cache_device_status(
+                    self._apply_selected_status_result(
                         self.selected_device_id,
                         str(adapted["selected_device_type"]),
                         dict(selected_payload),
+                        int(adapted["selected_mp_model"]),
                     )
                 else:
                     selected_status = dict(self.fleet_status_by_id.get(self.selected_device_id, {}))
