@@ -90,6 +90,15 @@ class SiemensM60(Device):
         self._cached_sys_descr: str | None = None
         self._cached_phase_max_green_1: dict[int, int] = {}
 
+    def get_capabilities(self) -> dict[str, Any]:
+        from ..services.command_catalog import export_command_capabilities
+
+        return {
+            "device_family": "traffic_signal_controller",
+            "protocol_family": "ntcip",
+            "command_capabilities": export_command_capabilities(),
+        }
+
     def _begin_poll_telemetry(self) -> dict[str, Any]:
         return {
             "request_count": 0,

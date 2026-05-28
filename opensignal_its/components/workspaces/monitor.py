@@ -569,22 +569,56 @@ def _intersection_control_panel() -> rx.Component:
     return rx.vstack(
         rx.text("Pattern / Mode", size="1", color="gray"),
         rx.hstack(
-            rx.button("Pattern 1", on_click=TrafficState.select_pattern_1, size="1"),
-            rx.button("Pattern 2", on_click=TrafficState.select_pattern_2, size="1"),
-            rx.button("Free", on_click=TrafficState.set_mode_free, size="1", variant="outline"),
-            rx.button("Coord", on_click=TrafficState.set_mode_coordinated, size="1", variant="outline"),
+            rx.button(
+                "Pattern 1",
+                on_click=TrafficState.select_pattern_1,
+                size="1",
+                disabled=rx.cond(TrafficState.selected_controller_supports_select_pattern, False, True),
+            ),
+            rx.button(
+                "Pattern 2",
+                on_click=TrafficState.select_pattern_2,
+                size="1",
+                disabled=rx.cond(TrafficState.selected_controller_supports_select_pattern, False, True),
+            ),
+            rx.button(
+                "Free",
+                on_click=TrafficState.set_mode_free,
+                size="1",
+                variant="outline",
+                disabled=rx.cond(TrafficState.selected_controller_supports_set_mode, False, True),
+            ),
+            rx.button(
+                "Coord",
+                on_click=TrafficState.set_mode_coordinated,
+                size="1",
+                variant="outline",
+                disabled=rx.cond(TrafficState.selected_controller_supports_set_mode, False, True),
+            ),
             spacing="1",
             wrap="wrap",
             width="100%",
         ),
         rx.text("Manual", size="1", color="gray"),
         rx.hstack(
-            rx.button("Hold", on_click=TrafficState.manual_hold, size="1", color_scheme="orange"),
-            rx.button("Advance", on_click=TrafficState.advance_phase, size="1"),
+            rx.button(
+                "Hold",
+                on_click=TrafficState.manual_hold,
+                size="1",
+                color_scheme="orange",
+                disabled=rx.cond(TrafficState.selected_controller_supports_manual_hold, False, True),
+            ),
+            rx.button(
+                "Advance",
+                on_click=TrafficState.advance_phase,
+                size="1",
+                disabled=rx.cond(TrafficState.selected_controller_supports_advance_phase, False, True),
+            ),
             spacing="1",
             wrap="wrap",
             width="100%",
         ),
+        rx.text(TrafficState.selected_controller_command_notice, size="1", color="gray"),
         rx.divider(),
         rx.text("Unlock Write", size="1", color="gray"),
         rx.hstack(
@@ -739,6 +773,103 @@ def _intersection_raw_tab() -> rx.Component:
     )
 
 
+def _media_stream_row(row: dict[str, str]) -> rx.Component:
+    return rx.box(
+        rx.vstack(
+            rx.hstack(
+                rx.vstack(
+                    rx.text(row["name"], size="2", font_weight="600"),
+                    rx.text(row["stream_id"], size="1", color="gray", font_family="monospace"),
+                    spacing="0",
+                    align="start",
+                ),
+                rx.spacer(),
+                rx.badge(row["enabled_label"], color_scheme=row["enabled_scheme"], size="1", variant="soft"),
+                rx.badge(row["status_label"], color_scheme=row["status_scheme"], size="1"),
+                spacing="2",
+                align="center",
+                width="100%",
+            ),
+            rx.text(row["safe_url"], size="1", color="gray", font_family="monospace"),
+            rx.text(row["status_text"], size="1", color="gray"),
+            rx.hstack(
+                rx.badge(row["timeout_text"], size="1", color_scheme="gray", variant="soft"),
+                rx.cond(
+                    row["latency_text"] != "",
+                    rx.badge(row["latency_text"], size="1", color_scheme="indigo", variant="soft"),
+                    rx.fragment(),
+                ),
+                rx.text(row["checked_text"], size="1", color="gray"),
+                spacing="2",
+                align="center",
+                wrap="wrap",
+                width="100%",
+            ),
+            rx.cond(
+                row["metadata_text"] != "",
+                rx.text(row["metadata_text"], size="1", color="gray"),
+                rx.fragment(),
+            ),
+            rx.cond(
+                row["error_text"] != "",
+                rx.text(row["error_text"], size="1", color="tomato"),
+                rx.fragment(),
+            ),
+            spacing="1",
+            width="100%",
+            align="start",
+        ),
+        border="1px solid #dbeafe",
+        border_radius="12px",
+        padding="12px",
+        background="rgba(255, 255, 255, 0.72)",
+        width="100%",
+    )
+
+
+def _intersection_video_tab() -> rx.Component:
+    return rx.vstack(
+        rx.hstack(
+            rx.button(
+                rx.cond(
+                    TrafficState.selected_controller_media_loading,
+                    "Checking Streams...",
+                    "Check Stream Health",
+                ),
+                on_click=TrafficState.refresh_selected_controller_media_stream_health,
+                size="1",
+                variant="outline",
+                disabled=TrafficState.selected_controller_media_loading,
+            ),
+            rx.text(TrafficState.selected_controller_media_notice, size="1", color="gray"),
+            spacing="2",
+            align="center",
+            width="100%",
+            wrap="wrap",
+        ),
+        rx.cond(
+            TrafficState.selected_controller_media_rows != [],
+            rx.vstack(
+                rx.foreach(
+                    TrafficState.selected_controller_media_rows,
+                    _media_stream_row,
+                ),
+                spacing="2",
+                width="100%",
+            ),
+            rx.box(
+                rx.text(TrafficState.selected_controller_media_notice, size="1", color="gray"),
+                border="1px dashed #cbd5e1",
+                border_radius="12px",
+                padding="12px",
+                width="100%",
+            ),
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
 def _intersection_detail_tabs() -> rx.Component:
     return rx.vstack(
         rx.hstack(
@@ -762,11 +893,7 @@ def _intersection_detail_tabs() -> rx.Component:
                     _intersection_cabinet_tab(),
                     rx.cond(
                         TrafficState.monitor_detail_tab == "video",
-                        rx.text(
-                            "Video integration is planned for a future release.",
-                            size="1",
-                            color="gray",
-                        ),
+                        _intersection_video_tab(),
                         _intersection_raw_tab(),
                     ),
                 ),

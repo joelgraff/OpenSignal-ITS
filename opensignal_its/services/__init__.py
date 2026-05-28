@@ -7,6 +7,7 @@ from .device_runtime_service import DeviceRuntimeService, RUNTIME
 from .event_service import EventService
 from .fleet_service import FleetService
 from .maintenance_service import MaintenanceService
+from .media_service import MediaService
 from .maintenance_scheduler import scheduler_status, start_retention_scheduler, stop_retention_scheduler
 from .preflight_service import bootstrap_runtime_safety, validate_runtime_configuration
 from .ops_api_service import OpsApiService
@@ -22,6 +23,7 @@ __all__ = [
 	"EventService",
 	"FleetService",
 	"MaintenanceService",
+	"MediaService",
 	"scheduler_status",
 	"start_retention_scheduler",
 	"stop_retention_scheduler",

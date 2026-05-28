@@ -7,10 +7,13 @@ from typing import Any
 
 import reflex as rx
 
+from ..devices.base import Device
 from ..devices.parsers import build_siemens_m60_view
 from ..db import STORE
 from ..models.device import DeviceConfig
-from ..services import FleetService, PollingService
+from ..models.media import MediaStreamConfig
+from ..protocols.rtsp import redact_rtsp_url, sanitize_rtsp_value
+from ..services import FleetService, MediaService, PollingService
 
 
 class MonitorStateMixin(rx.State, mixin=True):
@@ -50,6 +53,269 @@ class MonitorStateMixin(rx.State, mixin=True):
     selected_device_id: str = ""
     monitor_detail_tab: str = "logs"
     monitor_view: str = "dashboard"
+    selected_controller_command_capabilities: list[dict[str, Any]] = []
+    selected_controller_command_notice: str = "Select a controller to view command capabilities."
+    selected_controller_supports_select_pattern: bool = False
+    selected_controller_supports_set_mode: bool = False
+    selected_controller_supports_manual_hold: bool = False
+    selected_controller_supports_advance_phase: bool = False
+    selected_controller_media_streams: list[dict[str, Any]] = []
+    selected_controller_media_statuses: list[dict[str, Any]] = []
+    selected_controller_media_rows: list[dict[str, Any]] = []
+    selected_controller_media_notice: str = "Select a controller to view media streams."
+    selected_controller_media_loading: bool = False
+
+    def _clear_selected_controller_command_state(self, notice: str):
+        self.selected_controller_command_capabilities = []
+        self.selected_controller_supports_select_pattern = False
+        self.selected_controller_supports_set_mode = False
+        self.selected_controller_supports_manual_hold = False
+        self.selected_controller_supports_advance_phase = False
+        self.selected_controller_command_notice = notice
+
+    def _normalize_command_capability_payload(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_commands = payload.get("command_capabilities", [])
+        if not isinstance(raw_commands, list):
+            return []
+
+        normalized: list[dict[str, Any]] = []
+        seen_command_ids: set[str] = set()
+        for item in raw_commands:
+            if not isinstance(item, dict):
+                continue
+            command_id = str(item.get("command_id", "")).strip()
+            if not command_id or command_id in seen_command_ids:
+                continue
+            seen_command_ids.add(command_id)
+
+            raw_options = item.get("options", [])
+            normalized_options: list[dict[str, Any]] = []
+            if isinstance(raw_options, list):
+                for option in raw_options:
+                    if not isinstance(option, dict):
+                        continue
+                    label = str(option.get("label", "")).strip()
+                    value = option.get("value")
+                    if not label and value is None:
+                        continue
+                    normalized_options.append(
+                        {
+                            "label": label or str(value),
+                            "value": value,
+                        }
+                    )
+
+            raw_allowed_values = item.get("allowed_values", [])
+            normalized_allowed_values = (
+                list(raw_allowed_values)
+                if isinstance(raw_allowed_values, list)
+                else []
+            )
+
+            normalized.append(
+                {
+                    "command_id": command_id,
+                    "requires_confirmation": bool(item.get("requires_confirmation", False)),
+                    "requires_value": bool(item.get("requires_value", False)),
+                    "value_type": str(item.get("value_type", "")).strip(),
+                    "allowed_values": normalized_allowed_values,
+                    "options": normalized_options,
+                }
+            )
+        return normalized
+
+    def _refresh_selected_controller_command_state(self, notice: str = "") -> list[dict[str, Any]]:
+        target_device_id = str(self.selected_device_id).strip()
+        if not target_device_id:
+            self._clear_selected_controller_command_state(
+                notice or "Select a controller to view command capabilities."
+            )
+            return []
+
+        fleet_profiles = getattr(self, "_fleet_profiles", None)
+        if not callable(fleet_profiles):
+            self._clear_selected_controller_command_state(
+                notice or "Command capabilities are unavailable for the selected controller."
+            )
+            return []
+
+        try:
+            profiles = fleet_profiles()
+            selected_profile = FleetService.select_profile(profiles, target_device_id)
+            if not selected_profile or str(selected_profile.get("device_id", "")).strip() != target_device_id:
+                self._clear_selected_controller_command_state(
+                    notice or "No controller profile is loaded for the selected controller."
+                )
+                return []
+
+            device_type = (
+                str(selected_profile.get("device_type", FleetService.DEFAULT_DEVICE_TYPE)).strip()
+                or FleetService.DEFAULT_DEVICE_TYPE
+            )
+            device = Device.create(device_type, FleetService.build_device_config(selected_profile))
+            capability_payload = device.get_capabilities()
+        except Exception:
+            self._clear_selected_controller_command_state(
+                notice or "Command capabilities are unavailable for the selected controller."
+            )
+            return []
+
+        capabilities = self._normalize_command_capability_payload(
+            capability_payload if isinstance(capability_payload, dict) else {}
+        )
+        self.selected_controller_command_capabilities = capabilities
+
+        supported_command_ids = {
+            str(item.get("command_id", "")).strip()
+            for item in capabilities
+            if str(item.get("command_id", "")).strip()
+        }
+        self.selected_controller_supports_select_pattern = "select_pattern" in supported_command_ids
+        self.selected_controller_supports_set_mode = "set_mode" in supported_command_ids
+        self.selected_controller_supports_manual_hold = "manual_hold" in supported_command_ids
+        self.selected_controller_supports_advance_phase = "advance_phase" in supported_command_ids
+
+        if notice:
+            self.selected_controller_command_notice = notice
+        elif not capabilities:
+            self.selected_controller_command_notice = (
+                "Command capabilities are unavailable for the selected controller."
+            )
+        else:
+            capability_label = "command capability" if len(capabilities) == 1 else "command capabilities"
+            self.selected_controller_command_notice = (
+                f"{len(capabilities)} {capability_label} available for {target_device_id}."
+            )
+        return capabilities
+
+    def _safe_media_stream_config(self, stream_config: MediaStreamConfig) -> dict[str, Any]:
+        safe_url = redact_rtsp_url(stream_config.url)
+        try:
+            safe_url = MediaService.validate_stream_config(stream_config).safe_url
+        except ValueError:
+            pass
+
+        metadata = sanitize_rtsp_value(stream_config.metadata, stream_config.url, safe_url)
+        metadata_text = ""
+        if metadata:
+            metadata_text = ", ".join(
+                f"{key}: {value}"
+                for key, value in metadata.items()
+            )
+
+        return {
+            "stream_id": stream_config.stream_id,
+            "name": stream_config.name,
+            "enabled": bool(stream_config.enabled),
+            "enabled_label": "Enabled" if stream_config.enabled else "Disabled",
+            "enabled_scheme": "green" if stream_config.enabled else "gray",
+            "timeout_seconds": float(stream_config.timeout_seconds),
+            "timeout_text": f"{float(stream_config.timeout_seconds):g}s timeout",
+            "safe_url": safe_url,
+            "metadata": metadata,
+            "metadata_text": metadata_text,
+        }
+
+    def _build_selected_controller_media_rows(self) -> list[dict[str, Any]]:
+        status_by_stream_id = {
+            str(status.get("stream_id", "")).strip(): dict(status)
+            for status in self.selected_controller_media_statuses
+            if str(status.get("stream_id", "")).strip()
+        }
+        rows: list[dict[str, Any]] = []
+        for stream in self.selected_controller_media_streams:
+            status = dict(status_by_stream_id.get(str(stream.get("stream_id", "")).strip(), {}))
+            checked_at = str(status.get("checked_at", "")).strip()
+            is_checked = bool(status)
+            is_online = bool(status.get("is_online", False))
+            status_scheme = "gray"
+            status_label = "Not Checked"
+            if is_checked and is_online:
+                status_scheme = "green"
+                status_label = "Online"
+            elif is_checked:
+                status_scheme = "red"
+                status_label = "Offline"
+
+            latency_ms = status.get("latency_ms")
+            latency_text = ""
+            if latency_ms is not None:
+                latency_text = f"{latency_ms} ms"
+
+            error_text = "; ".join(str(error) for error in status.get("errors", []))
+            checked_text = f"Checked {checked_at}" if checked_at else "Not checked yet."
+            rows.append(
+                {
+                    **dict(stream),
+                    "status_text": str(status.get("status_text", "Not checked yet.")),
+                    "status_label": status_label,
+                    "status_scheme": status_scheme,
+                    "checked_text": checked_text,
+                    "latency_text": latency_text,
+                    "error_text": error_text,
+                }
+            )
+        return rows
+
+    def _refresh_selected_controller_media_state(self, notice: str = "") -> list[MediaStreamConfig]:
+        target_device_id = str(self.selected_device_id).strip()
+        if not target_device_id:
+            self.selected_controller_media_streams = []
+            self.selected_controller_media_statuses = []
+            self.selected_controller_media_rows = []
+            self.selected_controller_media_notice = notice or "Select a controller to view media streams."
+            return []
+
+        fleet_profiles = getattr(self, "_fleet_profiles", None)
+        if not callable(fleet_profiles):
+            self.selected_controller_media_streams = []
+            self.selected_controller_media_statuses = []
+            self.selected_controller_media_rows = []
+            self.selected_controller_media_notice = notice or "Media streams are unavailable for the selected controller."
+            return []
+
+        try:
+            profiles = fleet_profiles()
+            selected_profile = FleetService.select_profile(profiles, target_device_id)
+            if not selected_profile:
+                self.selected_controller_media_streams = []
+                self.selected_controller_media_statuses = []
+                self.selected_controller_media_rows = []
+                self.selected_controller_media_notice = notice or "No controller profile is loaded for the selected controller."
+                return []
+            stream_configs = FleetService.media_stream_configs(selected_profile)
+        except Exception:
+            self.selected_controller_media_streams = []
+            self.selected_controller_media_statuses = []
+            self.selected_controller_media_rows = []
+            self.selected_controller_media_notice = notice or "Media stream configuration is unavailable for the selected controller."
+            return []
+
+        status_by_stream_id = {
+            str(status.get("stream_id", "")).strip(): dict(status)
+            for status in self.selected_controller_media_statuses
+            if str(status.get("stream_id", "")).strip()
+        }
+        self.selected_controller_media_streams = [
+            self._safe_media_stream_config(stream_config)
+            for stream_config in stream_configs
+        ]
+        self.selected_controller_media_statuses = [
+            status_by_stream_id[stream_config.stream_id]
+            for stream_config in stream_configs
+            if stream_config.stream_id in status_by_stream_id
+        ]
+        self.selected_controller_media_rows = self._build_selected_controller_media_rows()
+        if notice:
+            self.selected_controller_media_notice = notice
+        elif not stream_configs:
+            self.selected_controller_media_notice = "No media streams configured for the selected controller."
+        else:
+            stream_label = "stream" if len(stream_configs) == 1 else "streams"
+            self.selected_controller_media_notice = (
+                f"{len(stream_configs)} media {stream_label} configured for {target_device_id}."
+            )
+        return stream_configs
 
     def update_ip_address(self, value: str):
         self.ip_address = value
@@ -65,6 +331,8 @@ class MonitorStateMixin(rx.State, mixin=True):
 
     def update_selected_device_id(self, value: str):
         self.selected_device_id = value
+        self._refresh_selected_controller_command_state()
+        self._refresh_selected_controller_media_state()
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):
             refresh_map()
@@ -87,6 +355,8 @@ class MonitorStateMixin(rx.State, mixin=True):
 
     def open_intersection_detail(self):
         self.monitor_view = "intersection"
+        self._refresh_selected_controller_command_state()
+        self._refresh_selected_controller_media_state()
 
     def back_to_dashboard(self):
         self.monitor_view = "dashboard"
@@ -104,6 +374,8 @@ class MonitorStateMixin(rx.State, mixin=True):
         load_profile = getattr(self, "load_controller_profile_from_row", None)
         if callable(load_profile):
             load_profile(normalized_device_id)
+        self._refresh_selected_controller_command_state()
+        self._refresh_selected_controller_media_state()
         close_dialog = getattr(self, "close_controller_profile_creation_dialog", None)
         if callable(close_dialog):
             close_dialog()
@@ -380,3 +652,30 @@ class MonitorStateMixin(rx.State, mixin=True):
         auto_refresh_handler = getattr(type(self), "auto_refresh_loop", None)
         if started and getattr(auto_refresh_handler, "is_background", False):
             return auto_refresh_handler()
+
+    async def refresh_selected_controller_media_stream_health(self):
+        self.selected_controller_media_loading = True
+        try:
+            stream_configs = self._refresh_selected_controller_media_state()
+            if not stream_configs:
+                return
+
+            stream_label = "stream" if len(stream_configs) == 1 else "streams"
+            self.selected_controller_media_notice = (
+                f"Checking {len(stream_configs)} media {stream_label} for {self.selected_device_id.strip()}..."
+            )
+            statuses: list[dict[str, Any]] = []
+            for stream_config in stream_configs:
+                status = await MediaService.check_stream_health(stream_config)
+                statuses.append(status.model_dump(mode="json"))
+            self.selected_controller_media_statuses = statuses
+            self.selected_controller_media_rows = self._build_selected_controller_media_rows()
+            self.selected_controller_media_notice = (
+                f"Checked {len(stream_configs)} media {stream_label} for {self.selected_device_id.strip()}."
+            )
+        except Exception:
+            self.selected_controller_media_statuses = []
+            self.selected_controller_media_rows = self._build_selected_controller_media_rows()
+            self.selected_controller_media_notice = "Media health check failed for the selected controller."
+        finally:
+            self.selected_controller_media_loading = False

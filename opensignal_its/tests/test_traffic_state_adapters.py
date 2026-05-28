@@ -1,4 +1,5 @@
 import asyncio
+import json
 import unittest
 from unittest.mock import patch
 
@@ -6,6 +7,7 @@ import reflex as rx
 
 from opensignal_its.models.event import AlarmDisplayRow, EventDisplayView, TimelineDisplayRow
 from opensignal_its.models.fleet import FleetDeviceStatus, FleetRefreshView, RuntimeRegistryView
+from opensignal_its.models.media import MediaStreamStatus
 from opensignal_its.states.auth_state import AuthStateMixin
 from opensignal_its.states.audit_state import AuditStateMixin
 from opensignal_its.states.command_state import CommandStateMixin
@@ -377,6 +379,375 @@ class TrafficStateAdapterTests(unittest.TestCase):
         self.assertIn("paused for int-4", probe.managed_polling_notice)
         self.assertIsNotNone(event_spec)
         self.assertEqual("refresh_fleet_status", event_spec.handler.fn.__name__)
+
+    def test_configuration_state_save_controller_profile_preserves_existing_media_streams(self):
+        class _ConfigurationSaveProbe(ConfigurationStateMixin, rx.State):
+            device_profiles_json: str = """[
+                {
+                    "device_id": "int-7",
+                    "name": "Broadway",
+                    "location_name": "Broadway & Pine",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.7",
+                    "port": 161,
+                    "community": "public",
+                    "snmp_version": "auto",
+                    "timeout_seconds": 3.0,
+                    "retries": 1,
+                    "polling_enabled": true,
+                    "media_streams": [
+                        {
+                            "stream_id": "cam-1",
+                            "name": "Northbound",
+                            "url": "rtsp://user:secret@camera.example.com/live",
+                            "timeout_seconds": 4.5,
+                            "enabled": true,
+                            "metadata": {
+                                "lane": "north"
+                            }
+                        }
+                    ]
+                }
+            ]"""
+            controller_profile_sort_key: str = "device_id"
+            controller_profile_sort_desc: bool = False
+            controller_profile_original_device_id: str = "int-7"
+            controller_profile_form_device_id: str = "int-7"
+            controller_profile_form_name: str = "Broadway Updated"
+            controller_profile_form_location_name: str = "Broadway & Pine"
+            controller_profile_form_device_type: str = "siemens_m60"
+            controller_profile_form_ip_address: str = "10.0.0.7"
+            controller_profile_form_port_text: str = "161"
+            controller_profile_form_community: str = "public"
+            controller_profile_form_snmp_version: str = "auto"
+            controller_profile_form_timeout_text: str = "3"
+            controller_profile_form_retries_text: str = "1"
+            controller_profile_form_polling_enabled: bool = True
+            selected_device_id: str = "int-7"
+            fleet_status_by_id: dict[str, object] = {}
+            runtime_registry_refreshed: bool = False
+
+            def refresh_runtime_registry_status(self):
+                self.runtime_registry_refreshed = True
+
+        probe = _ConfigurationSaveProbe(_reflex_internal_init=True)
+
+        with patch("opensignal_its.states.configuration_state.STORE"), patch(
+            "opensignal_its.states.configuration_state.PollingService.sync_runtime_registry"
+        ) as sync_runtime_registry:
+            event_spec = probe.save_controller_profile()
+
+        saved_profiles = json.loads(probe.device_profiles_json)
+
+        self.assertEqual(1, len(saved_profiles))
+        self.assertEqual("Broadway Updated", saved_profiles[0]["name"])
+        self.assertEqual(1, len(saved_profiles[0]["media_streams"]))
+        self.assertEqual("cam-1", saved_profiles[0]["media_streams"][0]["stream_id"])
+        self.assertEqual(
+            "rtsp://user:secret@camera.example.com/live",
+            saved_profiles[0]["media_streams"][0]["url"],
+        )
+        self.assertIn("Saved controller profile int-7.", probe.controller_profile_notice)
+        self.assertTrue(probe.runtime_registry_refreshed)
+        sync_runtime_registry.assert_called_once()
+        self.assertEqual("cam-1", sync_runtime_registry.call_args.args[0][0]["media_streams"][0]["stream_id"])
+        self.assertIsNotNone(event_spec)
+
+    def _make_monitor_media_probe(self, device_profiles_json: str):
+        class _MonitorMediaProbe(MonitorStateMixin, FleetStateMixin, TimeStateMixin, rx.State):
+            device_profiles_json: str = "[]"
+            selected_device_id: str = ""
+            fleet_status_by_id: dict[str, object] = {}
+            fleet_map_markers: list[dict[str, object]] = []
+            refresh_map_called: bool = False
+
+            def _refresh_fleet_map_fields(self, profiles=None):
+                self.refresh_map_called = True
+
+        probe = _MonitorMediaProbe(_reflex_internal_init=True)
+        probe.device_profiles_json = device_profiles_json
+        return probe
+
+    def test_monitor_state_loads_selected_controller_media_streams(self):
+        probe = self._make_monitor_media_probe(
+            """[
+                {
+                    "device_id": "int-1",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.1",
+                    "media_streams": [
+                        {
+                            "stream_id": "cam-1",
+                            "name": "Northbound",
+                            "url": "rtsp://user:secret@camera.example.com/live/main",
+                            "timeout_seconds": 4.5,
+                            "enabled": true,
+                            "metadata": {
+                                "lane": "north",
+                                "source": "rtsp://user:secret@camera.example.com/live/main"
+                            }
+                        }
+                    ]
+                }
+            ]"""
+        )
+
+        probe.update_selected_device_id("int-1")
+
+        self.assertTrue(probe.refresh_map_called)
+        self.assertEqual(1, len(probe.selected_controller_media_streams))
+        self.assertEqual("cam-1", probe.selected_controller_media_streams[0]["stream_id"])
+        self.assertEqual(
+            "rtsp://***@camera.example.com:554/live/main",
+            probe.selected_controller_media_streams[0]["safe_url"],
+        )
+        self.assertEqual("1 media stream configured for int-1.", probe.selected_controller_media_notice)
+        self.assertNotIn("secret", str(probe.selected_controller_media_streams))
+        self.assertEqual("Not checked yet.", probe.selected_controller_media_rows[0]["status_text"])
+
+    def test_monitor_state_loads_selected_controller_command_capabilities(self):
+        probe = self._make_monitor_media_probe(
+            """[
+                {
+                    "device_id": "int-1",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.1"
+                }
+            ]"""
+        )
+
+        class _CapabilityDevice:
+            def get_capabilities(self):
+                return {
+                    "device_family": "traffic_signal_controller",
+                    "protocol_family": "ntcip",
+                    "command_capabilities": [
+                        {
+                            "command_id": "select_pattern",
+                            "requires_confirmation": True,
+                            "requires_value": True,
+                            "value_type": "integer",
+                            "allowed_values": [1, 2],
+                            "options": [
+                                {"value": 1, "label": "Pattern 1"},
+                                {"value": 2, "label": "Pattern 2"},
+                            ],
+                        },
+                        {
+                            "command_id": "set_mode",
+                            "requires_confirmation": True,
+                            "requires_value": True,
+                            "value_type": "string",
+                            "allowed_values": ["free", "coordinated"],
+                            "options": [
+                                {"value": "free", "label": "Free"},
+                                {"value": "coordinated", "label": "Coord"},
+                            ],
+                        },
+                        {
+                            "command_id": "manual_hold",
+                            "requires_confirmation": True,
+                            "requires_value": True,
+                            "value_type": "boolean",
+                            "allowed_values": [True, False],
+                        },
+                        {
+                            "command_id": "advance_phase",
+                            "requires_confirmation": True,
+                            "requires_value": False,
+                            "value_type": "none",
+                        },
+                    ],
+                }
+
+        with patch(
+            "opensignal_its.states.monitor_state.Device.create",
+            return_value=_CapabilityDevice(),
+        ) as create_device:
+            probe.update_selected_device_id("int-1")
+
+        create_device.assert_called_once()
+        self.assertEqual(4, len(probe.selected_controller_command_capabilities))
+        self.assertEqual(
+            "select_pattern",
+            probe.selected_controller_command_capabilities[0]["command_id"],
+        )
+        self.assertEqual(
+            [1, 2],
+            probe.selected_controller_command_capabilities[0]["allowed_values"],
+        )
+        self.assertEqual(
+            [
+                {"value": 1, "label": "Pattern 1"},
+                {"value": 2, "label": "Pattern 2"},
+            ],
+            probe.selected_controller_command_capabilities[0]["options"],
+        )
+        self.assertEqual(
+            "string",
+            probe.selected_controller_command_capabilities[1]["value_type"],
+        )
+        self.assertEqual(
+            ["free", "coordinated"],
+            probe.selected_controller_command_capabilities[1]["allowed_values"],
+        )
+        self.assertEqual(
+            "boolean",
+            probe.selected_controller_command_capabilities[2]["value_type"],
+        )
+        self.assertEqual(
+            [True, False],
+            probe.selected_controller_command_capabilities[2]["allowed_values"],
+        )
+        self.assertEqual(
+            "none",
+            probe.selected_controller_command_capabilities[3]["value_type"],
+        )
+        self.assertTrue(probe.selected_controller_supports_select_pattern)
+        self.assertTrue(probe.selected_controller_supports_set_mode)
+        self.assertTrue(probe.selected_controller_supports_manual_hold)
+        self.assertTrue(probe.selected_controller_supports_advance_phase)
+        self.assertEqual(
+            "4 command capabilities available for int-1.",
+            probe.selected_controller_command_notice,
+        )
+
+    def test_monitor_state_command_capability_unsupported_shape_returns_clear_empty_state(self):
+        probe = self._make_monitor_media_probe(
+            """[
+                {
+                    "device_id": "int-2",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.2"
+                }
+            ]"""
+        )
+
+        class _UnsupportedCapabilityDevice:
+            def get_capabilities(self):
+                return {
+                    "device_family": "traffic_signal_controller",
+                }
+
+        with patch(
+            "opensignal_its.states.monitor_state.Device.create",
+            return_value=_UnsupportedCapabilityDevice(),
+        ):
+            probe.update_selected_device_id("int-2")
+
+        self.assertEqual([], probe.selected_controller_command_capabilities)
+        self.assertFalse(probe.selected_controller_supports_select_pattern)
+        self.assertFalse(probe.selected_controller_supports_set_mode)
+        self.assertFalse(probe.selected_controller_supports_manual_hold)
+        self.assertFalse(probe.selected_controller_supports_advance_phase)
+        self.assertEqual(
+            "Command capabilities are unavailable for the selected controller.",
+            probe.selected_controller_command_notice,
+        )
+
+    def test_monitor_state_selected_controller_media_empty_state_without_media_streams(self):
+        probe = self._make_monitor_media_probe(
+            """[
+                {
+                    "device_id": "int-2",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.2"
+                }
+            ]"""
+        )
+
+        probe.update_selected_device_id("int-2")
+
+        self.assertEqual([], probe.selected_controller_media_streams)
+        self.assertEqual([], probe.selected_controller_media_statuses)
+        self.assertEqual([], probe.selected_controller_media_rows)
+        self.assertEqual(
+            "No media streams configured for the selected controller.",
+            probe.selected_controller_media_notice,
+        )
+
+    def test_monitor_state_refresh_selected_controller_media_stream_health_stores_sanitized_results(self):
+        probe = self._make_monitor_media_probe(
+            """[
+                {
+                    "device_id": "int-1",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.1",
+                    "media_streams": [
+                        {
+                            "stream_id": "cam-1",
+                            "name": "Northbound",
+                            "url": "rtsp://user:secret@camera.example.com/live/main",
+                            "timeout_seconds": 4.5,
+                            "enabled": true,
+                            "metadata": {
+                                "lane": "north"
+                            }
+                        }
+                    ]
+                }
+            ]"""
+        )
+        probe.update_selected_device_id("int-1")
+
+        async def _fake_check_stream_health(stream_config):
+            return MediaStreamStatus(
+                stream_id=stream_config.stream_id,
+                name=stream_config.name,
+                enabled=stream_config.enabled,
+                is_online=True,
+                status_text="RTSP endpoint reachable",
+                safe_url="rtsp://***@camera.example.com:554/live/main",
+                latency_ms=12.5,
+                errors=[],
+                raw_data={},
+                extra={"lane": "north"},
+            )
+
+        with patch(
+            "opensignal_its.states.monitor_state.MediaService.check_stream_health",
+            side_effect=_fake_check_stream_health,
+        ) as check_stream_health:
+            asyncio.run(probe.refresh_selected_controller_media_stream_health())
+
+        check_stream_health.assert_called_once()
+        self.assertFalse(probe.selected_controller_media_loading)
+        self.assertEqual(1, len(probe.selected_controller_media_statuses))
+        self.assertEqual("cam-1", probe.selected_controller_media_statuses[0]["stream_id"])
+        self.assertEqual("RTSP endpoint reachable", probe.selected_controller_media_rows[0]["status_text"])
+        self.assertEqual("Online", probe.selected_controller_media_rows[0]["status_label"])
+        self.assertEqual("12.5 ms", probe.selected_controller_media_rows[0]["latency_text"])
+        self.assertIn("Checked 1 media stream for int-1.", probe.selected_controller_media_notice)
+        self.assertNotIn("secret", str(probe.selected_controller_media_statuses))
+
+    def test_monitor_state_media_config_errors_do_not_leak_credentials(self):
+        probe = self._make_monitor_media_probe(
+            """[
+                {
+                    "device_id": "int-9",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.9",
+                    "media_streams": [
+                        {
+                            "stream_id": "cam-9",
+                            "url": "http://user:secret@camera.example.com/live"
+                        }
+                    ]
+                }
+            ]"""
+        )
+
+        probe.update_selected_device_id("int-9")
+
+        self.assertEqual([], probe.selected_controller_media_streams)
+        self.assertEqual([], probe.selected_controller_media_statuses)
+        self.assertEqual([], probe.selected_controller_media_rows)
+        self.assertEqual(
+            "Media stream configuration is unavailable for the selected controller.",
+            probe.selected_controller_media_notice,
+        )
+        self.assertNotIn("secret", probe.selected_controller_media_notice)
+        self.assertNotIn("user", probe.selected_controller_media_notice)
 
     def test_fleet_state_refresh_fleet_card_fields_applies_mapping_filter(self):
         class _FleetProbe(FleetStateMixin, rx.State):
@@ -1066,6 +1437,56 @@ class TrafficStateAdapterTests(unittest.TestCase):
 
         self.assertEqual([("select_pattern", 1, False)], probe.calls)
 
+    def test_command_state_wrappers_delegate_existing_command_ids(self):
+        class _CommandProbe(CommandStateMixin, rx.State):
+            calls: list[tuple[object, object, object]] = []
+
+            async def send_command(self, cmd_type, value, force_confirmed=False):
+                self.calls.append((cmd_type, value, force_confirmed))
+
+        probe = _CommandProbe(_reflex_internal_init=True)
+        probe.calls = []
+
+        asyncio.run(probe.select_pattern_2())
+        asyncio.run(probe.set_mode_free())
+        asyncio.run(probe.set_mode_coordinated())
+        asyncio.run(probe.manual_hold())
+        asyncio.run(probe.advance_phase())
+
+        self.assertEqual(
+            [
+                ("select_pattern", 2, False),
+                ("set_mode", "free", False),
+                ("set_mode", "coordinated", False),
+                ("manual_hold", True, False),
+                ("advance_phase", True, False),
+            ],
+            probe.calls,
+        )
+
+    def test_safety_state_requires_confirmation_routes_through_command_catalog(self):
+        class _SafetyProbe(SafetyStateMixin, rx.State):
+            safe_command_probe: bool = False
+
+        probe = _SafetyProbe(_reflex_internal_init=True)
+
+        with patch(
+            "opensignal_its.states.safety_state.command_requires_confirmation",
+            return_value=True,
+        ) as command_requires_confirmation:
+            self.assertTrue(probe._requires_confirmation("manual_hold"))
+
+        command_requires_confirmation.assert_called_once_with("manual_hold")
+
+        probe.safe_command_probe = True
+        with patch(
+            "opensignal_its.states.safety_state.command_requires_confirmation",
+            return_value=True,
+        ) as command_requires_confirmation:
+            self.assertFalse(probe._requires_confirmation("manual_hold"))
+
+        command_requires_confirmation.assert_not_called()
+
     def test_command_state_send_command_routes_success_through_shared_helper(self):
         probe = self._make_command_status_probe()
         probe.status_log_calls = []
@@ -1412,6 +1833,17 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "selected_device_id",
             "monitor_detail_tab",
             "monitor_view",
+            "selected_controller_command_capabilities",
+            "selected_controller_command_notice",
+            "selected_controller_supports_select_pattern",
+            "selected_controller_supports_set_mode",
+            "selected_controller_supports_manual_hold",
+            "selected_controller_supports_advance_phase",
+            "selected_controller_media_streams",
+            "selected_controller_media_statuses",
+            "selected_controller_media_rows",
+            "selected_controller_media_notice",
+            "selected_controller_media_loading",
             "update_ip_address",
             "update_port_text",
             "update_community",
@@ -1431,6 +1863,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             "_apply_phase_payload",
             "_collect_selected_status_snapshot",
             "_apply_status_snapshot",
+            "refresh_selected_controller_media_stream_health",
             "add_and_poll_m60",
             "connect_m60",
             "refresh_status",

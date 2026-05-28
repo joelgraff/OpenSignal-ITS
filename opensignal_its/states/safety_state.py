@@ -8,6 +8,7 @@ from typing import Any
 
 import reflex as rx
 
+from ..services.command_catalog import command_requires_confirmation
 from ..services import CommandSafetyService
 
 
@@ -50,12 +51,7 @@ class SafetyStateMixin(rx.State, mixin=True):
     def _requires_confirmation(self, cmd_type: str) -> bool:
         if self.safe_command_probe:
             return False
-        return cmd_type in {
-            "select_pattern",
-            "set_mode",
-            "manual_hold",
-            "advance_phase",
-        }
+        return command_requires_confirmation(cmd_type)
 
     def _start_command_confirmation(self, cmd_type: str, value: Any):
         token = str(random.randint(100000, 999999))

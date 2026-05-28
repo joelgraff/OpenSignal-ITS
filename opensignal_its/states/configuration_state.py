@@ -345,6 +345,10 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         try:
             updated_profiles = list(profiles)
             original_device_id = self.controller_profile_original_device_id.strip()
+            existing_profile = None
+            existing_lookup_id = original_device_id or target_device_id
+            if existing_lookup_id:
+                existing_profile = FleetService.select_profile(profiles, existing_lookup_id)
             if original_device_id and original_device_id != target_device_id:
                 updated_profiles = FleetService.remove_profile(updated_profiles, original_device_id)
             profile = FleetService.build_profile_from_form(
@@ -362,6 +366,8 @@ class ConfigurationStateMixin(rx.State, mixin=True):
                 longitude_text=self.controller_profile_form_longitude_text,
                 polling_enabled=self.controller_profile_form_polling_enabled,
             )
+            if existing_profile is not None and not profile.get("media_streams"):
+                profile["media_streams"] = list(existing_profile.get("media_streams", []))
             updated_profiles = FleetService.upsert_profile(updated_profiles, profile)
         except Exception as exc:
             self.controller_profile_form_error = str(exc)

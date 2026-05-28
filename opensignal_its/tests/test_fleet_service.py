@@ -1,7 +1,9 @@
 import unittest
 import asyncio
+import json
 
 from opensignal_its.models.device import DeviceConfig
+from opensignal_its.models.media import MediaStreamConfig
 from opensignal_its.models.fleet import FleetRefreshView, FleetSnapshotEntry, RuntimeRegistryView
 from opensignal_its.services.fleet_service import FleetService
 
@@ -16,6 +18,111 @@ class FleetServiceTests(unittest.TestCase):
         self.assertTrue(profiles[0]["polling_enabled"])
         self.assertEqual(40.0, profiles[0]["latitude"])
         self.assertEqual(-75.0, profiles[0]["longitude"])
+        self.assertEqual([], profiles[0]["media_streams"])
+
+    def test_parse_profiles_json_normalizes_media_streams(self):
+        raw = """[
+            {
+                "device_id": "int-1",
+                "device_type": "siemens_m60",
+                "ip_address": "10.0.0.1",
+                "media_streams": [
+                    {
+                        "stream_id": "cam-1",
+                        "name": "Northbound",
+                        "url": "rtsp://user:secret@camera.example.com/live/main?profile=1",
+                        "timeout_seconds": "4.5",
+                        "enabled": "true",
+                        "metadata": {
+                            "lane": "north"
+                        }
+                    }
+                ]
+            }
+        ]"""
+
+        profiles = FleetService.parse_profiles_json(raw)
+
+        self.assertEqual(1, len(profiles))
+        self.assertEqual(1, len(profiles[0]["media_streams"]))
+        stream = profiles[0]["media_streams"][0]
+        self.assertEqual("cam-1", stream["stream_id"])
+        self.assertEqual("Northbound", stream["name"])
+        self.assertEqual("rtsp://user:secret@camera.example.com/live/main?profile=1", stream["url"])
+        self.assertEqual(4.5, stream["timeout_seconds"])
+        self.assertTrue(stream["enabled"])
+        self.assertEqual({"lane": "north"}, stream["metadata"])
+
+    def test_parse_profiles_json_rejects_invalid_media_streams_without_leaking_credentials(self):
+        raw = """[
+            {
+                "device_id": "int-1",
+                "device_type": "siemens_m60",
+                "ip_address": "10.0.0.1",
+                "media_streams": [
+                    {
+                        "stream_id": "cam-1",
+                        "url": "http://user:secret@camera.example.com/live"
+                    }
+                ]
+            }
+        ]"""
+
+        with self.assertRaises(ValueError) as ctx:
+            FleetService.parse_profiles_json(raw)
+
+        self.assertIn("Controller profile #1 media_streams entry #1 url", str(ctx.exception))
+        self.assertIn("rtsp://", str(ctx.exception))
+        self.assertNotIn("user", str(ctx.exception))
+        self.assertNotIn("secret", str(ctx.exception))
+
+    def test_dump_profiles_json_preserves_media_streams(self):
+        dumped = FleetService.dump_profiles_json(
+            [
+                {
+                    "device_id": "int-1",
+                    "device_type": "siemens_m60",
+                    "ip_address": "10.0.0.1",
+                    "media_streams": [
+                        {
+                            "stream_id": "cam-1",
+                            "url": "rtsp://user:secret@camera.example.com/live",
+                            "timeout_seconds": 5,
+                            "enabled": False,
+                            "metadata": {"lane": "north"},
+                        }
+                    ],
+                }
+            ]
+        )
+
+        payload = json.loads(dumped)
+
+        self.assertEqual(1, len(payload))
+        self.assertEqual(1, len(payload[0]["media_streams"]))
+        self.assertEqual("cam-1", payload[0]["media_streams"][0]["stream_id"])
+        self.assertEqual("rtsp://user:secret@camera.example.com/live", payload[0]["media_streams"][0]["url"])
+        self.assertFalse(payload[0]["media_streams"][0]["enabled"])
+
+    def test_media_stream_configs_returns_validated_models(self):
+        configs = FleetService.media_stream_configs(
+            {
+                "device_id": "int-1",
+                "device_type": "siemens_m60",
+                "ip_address": "10.0.0.1",
+                "media_streams": [
+                    {
+                        "stream_id": "cam-1",
+                        "url": "rtsp://camera.example.com/live",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(1, len(configs))
+        self.assertIsInstance(configs[0], MediaStreamConfig)
+        self.assertEqual("cam-1", configs[0].stream_id)
+        self.assertEqual("rtsp://camera.example.com/live", configs[0].url)
 
     def test_parse_profiles_json_rejects_non_list(self):
         with self.assertRaises(ValueError):

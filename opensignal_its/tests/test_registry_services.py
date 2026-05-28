@@ -1,10 +1,13 @@
 import asyncio
+import json
 import unittest
 from datetime import datetime, timezone
 from tempfile import TemporaryDirectory
 from pathlib import Path
+from unittest.mock import patch
 
 from opensignal_its.devices.base import Device
+from opensignal_its.devices.siemens_m60 import SiemensM60
 from opensignal_its.models.device import DeviceConfig, DeviceStatus
 from opensignal_its.db.audit_store import AuditStore
 from opensignal_its.services.command_service import CommandService
@@ -47,6 +50,30 @@ class _StopTrackingDevice:
 
     def stop_polling(self):
         self.stopped = True
+
+
+class _CapturingCommandDevice(Device):
+    device_type = "fake_registry"
+
+    def __init__(self, config: DeviceConfig):
+        super().__init__(config)
+        self.command_calls: list[tuple[str, dict[str, object]]] = []
+
+    async def connect(self) -> bool:
+        self.status.timestamp = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        self.status.is_online = True
+        self.status.status_text = "connected"
+        return True
+
+    async def poll(self) -> DeviceStatus:
+        self.status.timestamp = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        self.status.is_online = True
+        self.status.status_text = "polled"
+        return self.status
+
+    async def command(self, command: str, params: dict) -> bool:
+        self.command_calls.append((command, dict(params)))
+        return True
 
 
 class RegistryServicesTests(unittest.TestCase):
@@ -115,6 +142,102 @@ class RegistryServicesTests(unittest.TestCase):
 
         self.assertFalse(success)
         self.assertIn("Unknown command", error)
+
+    def test_command_service_shapes_manual_hold_params_explicitly(self):
+        config = DeviceConfig(ip_address="10.0.0.1", name="Fake")
+        device = _CapturingCommandDevice(config)
+
+        with patch(
+            "opensignal_its.services.command_service.RUNTIME.get_or_create",
+            return_value=("fake_registry::dev-1", device),
+        ):
+            success, payload, mp_model, error = asyncio.run(
+                CommandService.execute_command(
+                    device_type="fake_registry",
+                    config=config,
+                    cmd_type="manual_hold",
+                    value="true",
+                    safe_command_probe=False,
+                    device_id="dev-1",
+                )
+            )
+
+        self.assertTrue(success)
+        self.assertEqual("", error)
+        self.assertEqual(1, mp_model)
+        self.assertEqual("polled", payload["status_text"])
+        self.assertEqual(
+            [("manual_hold", {"hold": True, "probe_only": False, "allow_all_phases": True})],
+            device.command_calls,
+        )
+
+    def test_command_service_shapes_advance_phase_params_explicitly(self):
+        config = DeviceConfig(ip_address="10.0.0.1", name="Fake")
+        device = _CapturingCommandDevice(config)
+
+        with patch(
+            "opensignal_its.services.command_service.RUNTIME.get_or_create",
+            return_value=("fake_registry::dev-1", device),
+        ):
+            success, payload, mp_model, error = asyncio.run(
+                CommandService.execute_command(
+                    device_type="fake_registry",
+                    config=config,
+                    cmd_type="advance_phase",
+                    value=True,
+                    safe_command_probe=False,
+                    device_id="dev-1",
+                )
+            )
+
+        self.assertTrue(success)
+        self.assertEqual("", error)
+        self.assertEqual(1, mp_model)
+        self.assertEqual("polled", payload["status_text"])
+        self.assertEqual(
+            [("advance_phase", {"probe_only": False, "allow_all_phases": True})],
+            device.command_calls,
+        )
+
+    def test_siemens_m60_capabilities_expose_json_safe_command_metadata(self):
+        config = DeviceConfig(ip_address="10.0.0.1", name="M60")
+
+        capabilities = json.loads(json.dumps(SiemensM60(config).get_capabilities()))
+        command_capabilities = capabilities["command_capabilities"]
+        select_pattern = command_capabilities[0]
+        set_mode = command_capabilities[1]
+        manual_hold = command_capabilities[2]
+        advance_phase = command_capabilities[3]
+
+        self.assertEqual("traffic_signal_controller", capabilities["device_family"])
+        self.assertEqual("ntcip", capabilities["protocol_family"])
+        self.assertEqual(
+            ["select_pattern", "set_mode", "manual_hold", "advance_phase"],
+            [item["command_id"] for item in command_capabilities],
+        )
+        self.assertTrue(select_pattern["requires_confirmation"])
+        self.assertEqual("integer", select_pattern["value_type"])
+        self.assertEqual([1, 2], select_pattern["allowed_values"])
+        self.assertEqual(
+            [
+                {"value": 1, "label": "Pattern 1"},
+                {"value": 2, "label": "Pattern 2"},
+            ],
+            select_pattern["options"],
+        )
+        self.assertEqual("string", set_mode["value_type"])
+        self.assertEqual(["free", "coordinated"], set_mode["allowed_values"])
+        self.assertEqual(
+            [
+                {"value": "free", "label": "Free"},
+                {"value": "coordinated", "label": "Coord"},
+            ],
+            set_mode["options"],
+        )
+        self.assertEqual("boolean", manual_hold["value_type"])
+        self.assertEqual([True, False], manual_hold["allowed_values"])
+        self.assertFalse(advance_phase["requires_value"])
+        self.assertEqual("none", advance_phase["value_type"])
 
     def test_runtime_reuses_same_device_instance(self):
         config = DeviceConfig(ip_address="10.0.0.1", name="Fake")

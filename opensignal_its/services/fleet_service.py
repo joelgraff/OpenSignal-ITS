@@ -9,12 +9,14 @@ from string import Template
 from typing import Any, Awaitable, Callable
 
 from ..models.device import DeviceConfig
+from ..models.media import MediaStreamConfig
 from ..models.fleet import (
     FleetDeviceStatus,
     FleetRefreshView,
     FleetSnapshotEntry,
     RuntimeRegistryView,
 )
+from ..protocols.rtsp import RtspUrlValidationError, parse_rtsp_url
 
 
 class FleetService:
@@ -106,6 +108,10 @@ class FleetService:
             raise ValueError(f"{label} is missing ip_address.")
         if (latitude is None) != (longitude is None):
             raise ValueError(f"{label} must define both latitude and longitude or leave both blank.")
+        media_streams = FleetService._normalize_media_streams(
+            item.get("media_streams"),
+            label,
+        )
 
         return {
             "device_id": device_id,
@@ -122,7 +128,77 @@ class FleetService:
             "latitude": latitude,
             "longitude": longitude,
             "polling_enabled": FleetService._normalize_bool(item.get("polling_enabled", True)),
+            "media_streams": media_streams,
         }
+
+    @staticmethod
+    def _normalize_media_stream_item(item: dict[str, Any], label: str) -> dict[str, Any]:
+        if not isinstance(item, dict):
+            raise ValueError(f"{label} must be an object.")
+
+        stream_id = str(item.get("stream_id", "")).strip()
+        if not stream_id:
+            raise ValueError(f"{label} is missing stream_id.")
+
+        name = str(item.get("name", stream_id)).strip() or stream_id
+        raw_url = str(item.get("url", "")).strip()
+
+        try:
+            timeout_seconds = float(item.get("timeout_seconds", 3.0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label} timeout_seconds must be a number.") from exc
+        if timeout_seconds <= 0:
+            raise ValueError(f"{label} timeout_seconds must be greater than 0.")
+
+        try:
+            enabled = FleetService._normalize_bool(item.get("enabled", True))
+        except ValueError as exc:
+            raise ValueError(f"{label} enabled must be a boolean value.") from exc
+
+        metadata = item.get("metadata", {})
+        if metadata is None:
+            metadata = {}
+        if not isinstance(metadata, dict):
+            raise ValueError(f"{label} metadata must be an object.")
+
+        try:
+            parse_rtsp_url(raw_url)
+        except RtspUrlValidationError as exc:
+            raise ValueError(f"{label} url {exc}") from exc
+
+        return MediaStreamConfig(
+            stream_id=stream_id,
+            name=name,
+            url=raw_url,
+            timeout_seconds=timeout_seconds,
+            enabled=enabled,
+            metadata=dict(metadata),
+        ).model_dump(mode="json")
+
+    @staticmethod
+    def _normalize_media_streams(
+        media_streams: Any,
+        profile_label: str,
+    ) -> list[dict[str, Any]]:
+        if media_streams is None:
+            return []
+        if not isinstance(media_streams, list):
+            raise ValueError(f"{profile_label} media_streams must be a list.")
+
+        normalized: list[dict[str, Any]] = []
+        for idx, item in enumerate(media_streams, start=1):
+            normalized.append(
+                FleetService._normalize_media_stream_item(
+                    item,
+                    f"{profile_label} media_streams entry #{idx}",
+                )
+            )
+        return normalized
+
+    @staticmethod
+    def media_stream_configs(profile: dict[str, Any]) -> list[MediaStreamConfig]:
+        normalized = FleetService.normalize_profile(profile)
+        return [MediaStreamConfig(**stream) for stream in normalized.get("media_streams", [])]
 
     @staticmethod
     def parse_profiles_json(raw_json: str) -> list[dict[str, Any]]:
