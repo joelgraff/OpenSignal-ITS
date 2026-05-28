@@ -795,7 +795,7 @@ class TrafficStateAdapterTests(unittest.TestCase):
             probe.selected_controller_media_notice,
         )
 
-    def test_monitor_state_refresh_selected_controller_media_stream_health_stores_sanitized_results(self):
+    def test_monitor_state_refresh_selected_controller_media_stream_health_uses_describe_results(self):
         probe = self._make_monitor_media_probe(
             """[
                 {
@@ -819,31 +819,31 @@ class TrafficStateAdapterTests(unittest.TestCase):
         )
         probe.update_selected_device_id("int-1")
 
-        async def _fake_check_stream_health(stream_config):
+        async def _fake_describe_stream_protocol(stream_config):
             return MediaStreamStatus(
                 stream_id=stream_config.stream_id,
                 name=stream_config.name,
                 enabled=stream_config.enabled,
                 is_online=True,
-                status_text="RTSP endpoint reachable",
+                status_text="RTSP DESCRIBE succeeded",
                 safe_url="rtsp://***@camera.example.com:554/live/main",
                 latency_ms=12.5,
                 errors=[],
                 raw_data={},
-                extra={"lane": "north"},
+                extra={"lane": "north", "probe": "describe", "status_code": 200},
             )
 
         with patch(
-            "opensignal_its.states.monitor_state.MediaService.check_stream_health",
-            side_effect=_fake_check_stream_health,
-        ) as check_stream_health:
+            "opensignal_its.states.monitor_state.MediaService.describe_stream_protocol",
+            side_effect=_fake_describe_stream_protocol,
+        ) as describe_stream_protocol:
             asyncio.run(probe.refresh_selected_controller_media_stream_health())
 
-        check_stream_health.assert_called_once()
+        describe_stream_protocol.assert_called_once()
         self.assertFalse(probe.selected_controller_media_loading)
         self.assertEqual(1, len(probe.selected_controller_media_statuses))
         self.assertEqual("cam-1", probe.selected_controller_media_statuses[0]["stream_id"])
-        self.assertEqual("RTSP endpoint reachable", probe.selected_controller_media_rows[0]["status_text"])
+        self.assertEqual("RTSP DESCRIBE succeeded", probe.selected_controller_media_rows[0]["status_text"])
         self.assertEqual("Online", probe.selected_controller_media_rows[0]["status_label"])
         self.assertEqual("12.5 ms", probe.selected_controller_media_rows[0]["latency_text"])
         self.assertIn("Checked 1 media stream for int-1.", probe.selected_controller_media_notice)

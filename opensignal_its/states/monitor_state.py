@@ -742,7 +742,7 @@ class MonitorStateMixin(rx.State, mixin=True):
             )
             statuses: list[dict[str, Any]] = []
             for stream_config in stream_configs:
-                status = await MediaService.check_stream_health(stream_config)
+                status = await MediaService.describe_stream_protocol(stream_config)
                 statuses.append(status.model_dump(mode="json"))
             self.selected_controller_media_statuses = statuses
             self.selected_controller_media_rows = self._build_selected_controller_media_rows()

@@ -10,6 +10,7 @@ Current Phase 5 status: the Skyline DMS post-command verification target, one re
 
 Post-Phase-5 bounded slice status: the RTSP protocol layer now has deterministic local DESCRIBE-response simulator coverage, including malformed-response and explicit non-2xx response handling, without adding playback, transcoding, or UI work.
 Post-Phase-5 bounded slice follow-up status: `MediaService` now exposes one additive service-level DESCRIBE consumer path with sanitized success and explicit non-2xx outcome metadata while leaving the default reachability path unchanged.
+RTSP current-scope end point: the selected-controller Video Feeds refresh path now consumes the bounded DESCRIBE service seam, so the current RTSP scope ends with one real caller using protocol-level outcomes through the existing monitor surface, without widening the default health path or adding playback work.
 
 ## Current Execution Board
 
@@ -33,9 +34,15 @@ Status markers: `[ ]` not started, `[~]` in progress, `[x]` complete.
 - [x] Phase 4e add acknowledgment and multi-step command lifecycle support
 - [x] Phase 4f land the first DMS-targeted schema and driver path behind a vendor-agnostic device-family boundary
 
-### Next Bounded Slice
+### RTSP End Point
 
-- [ ] If this DESCRIBE service path gets a real consumer later, wire one explicit caller to it without changing the default health path for every stream
+- [x] Wire one explicit caller, the selected-controller Video Feeds refresh path, to the bounded DESCRIBE service seam without changing the default conservative `MediaService.check_stream_health(...)` path
+- [x] Keep RTSP scope bounded to validated stream config, credential-safe status shaping, conservative TCP reachability, DESCRIBE protocol outcomes, and selected-controller status exposure
+- [x] Stop RTSP expansion here for the current roadmap scope and treat further RTSP work as a new roadmap decision instead of an automatic next slice
+
+### Next Board Action
+
+- [ ] Reevaluate the overall roadmap before starting another RTSP, DMS, or video-detection slice
 
 ### Validation Track
 
