@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 from typing import Any
 
 import reflex as rx
@@ -55,6 +56,9 @@ class MonitorStateMixin(rx.State, mixin=True):
     monitor_view: str = "dashboard"
     selected_controller_command_capabilities: list[dict[str, Any]] = []
     selected_controller_command_notice: str = "Select a controller to view command capabilities."
+    selected_controller_connection_notice: str = ""
+    selected_controller_connection_notice_scheme: str = "gray"
+    selected_controller_live_refresh_running: bool = False
     selected_controller_pattern_action_rows: list[dict[str, str]] = []
     selected_controller_mode_action_rows: list[dict[str, str]] = []
     selected_controller_supports_select_pattern: bool = False
@@ -405,7 +409,45 @@ class MonitorStateMixin(rx.State, mixin=True):
     def update_snmp_version(self, value: str):
         self.snmp_version = value
 
+    def _clear_selected_controller_connection_notice(self):
+        self.selected_controller_connection_notice = ""
+        self.selected_controller_connection_notice_scheme = "gray"
+
+    def _reset_selected_controller_live_detail_state(self):
+        self.m60_status = {}
+        self.m60_status_json = ""
+        self.status_text = "No status yet"
+        self.active_snmp_version = "unknown"
+        self.current_pattern = "Unknown"
+        self.unit_status = "unknown"
+        self.green_phases = "none"
+        self.yellow_phases = "none"
+        self.red_phases = "none"
+        self.vehicle_calls = "none"
+        self.ped_calls = "none"
+        self.remaining_time_summary = "none"
+        self.timer_mode_text = "unknown"
+        self.ring_status_summary = "unknown"
+        self.ring_status_lines = []
+        self.ring_status_console_text = "RING STATUS CONSOLE\n(no data)"
+        self.last_ring_status_raw = {}
+        self.ring_state_age_seconds = {}
+        self.phase_data = {}
+        self.phase_current_pattern = "Unknown"
+        self.phase_unit_control_status = "unknown"
+        self.phase_detail_lines = []
+        self.last_timer_snapshot = {}
+        self.phase_state_age_seconds = {}
+        self.last_phase_state_signature = {}
+        self.is_online = False
+        self.last_updated = ""
+        if hasattr(self, "error"):
+            self.error = ""
+        self._clear_selected_controller_connection_notice()
+
     def update_selected_device_id(self, value: str):
+        if str(value).strip() != self.selected_device_id.strip():
+            self._reset_selected_controller_live_detail_state()
         self.selected_device_id = value
         self._refresh_selected_controller_command_state()
         self._refresh_selected_controller_media_state()
@@ -436,15 +478,23 @@ class MonitorStateMixin(rx.State, mixin=True):
 
     def back_to_dashboard(self):
         self.monitor_view = "dashboard"
+        refresh_cards = getattr(self, "_refresh_fleet_card_fields", None)
+        if callable(refresh_cards):
+            refresh_cards()
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):
             refresh_map()
+        refresh_aggregates = getattr(self, "_refresh_fleet_aggregate_fields", None)
+        if callable(refresh_aggregates):
+            refresh_aggregates()
 
     async def _select_controller_from_device_id(self, device_id: str):
         normalized_device_id = str(device_id).strip()
         if not normalized_device_id:
             return
 
+        if normalized_device_id != self.selected_device_id.strip():
+            self._reset_selected_controller_live_detail_state()
         self.selected_device_id = normalized_device_id
         self.monitor_view = "intersection"
         load_profile = getattr(self, "load_controller_profile_from_row", None)
@@ -458,14 +508,153 @@ class MonitorStateMixin(rx.State, mixin=True):
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):
             refresh_map()
-        refresh_fleet_status = getattr(self, "refresh_fleet_status", None)
-        if callable(refresh_fleet_status):
-            await refresh_fleet_status()
+        return self._selected_controller_live_refresh_event()
+
+    def _selected_controller_live_refresh_event(self):
+        if not bool(getattr(self, "controller_profile_form_polling_enabled", False)):
+            if hasattr(self, "auto_refresh_enabled"):
+                self.auto_refresh_enabled = False
+            return None
+
+        if hasattr(self, "auto_refresh_enabled"):
+            self.auto_refresh_enabled = True
+        if hasattr(self, "auto_reconnect_enabled"):
+            self.auto_reconnect_enabled = True
+        if hasattr(self, "managed_polling_notice"):
+            target = self.selected_device_id.strip() or "selected controller"
+            interval_seconds = ""
+            refresh_interval = getattr(self, "_refresh_interval_seconds", None)
+            if callable(refresh_interval):
+                interval_seconds = f" every {refresh_interval():g}s"
+            self.managed_polling_notice = f"Live updates enabled for {target}; refreshing{interval_seconds}."
+
+        live_refresh_handler = getattr(type(self), "selected_controller_live_refresh_loop", None)
+        if callable(live_refresh_handler) and getattr(live_refresh_handler, "is_background", False):
+            return live_refresh_handler()
+        return None
+
+    def _set_selected_live_refresh_notice(
+        self,
+        device_id: str,
+        status_payload: dict[str, Any],
+        interval_seconds: float,
+    ):
+        errors = status_payload.get("errors", [])
+        has_errors = bool(errors) if isinstance(errors, list) else bool(errors)
+        is_online = bool(status_payload.get("is_online", False))
+        if is_online and not has_errors:
+            self.managed_polling_notice = (
+                f"Live refresh updated {device_id}; next refresh in {interval_seconds:g}s."
+            )
+            return
+
+        status_text = str(status_payload.get("status_text", "offline")).strip() or "offline"
+        raw_extra = status_payload.get("extra", {})
+        extra = raw_extra if isinstance(raw_extra, dict) else {}
+        raw_backoff = extra.get("poll_backoff", {})
+        backoff = raw_backoff if isinstance(raw_backoff, dict) else {}
+        failure_streak = backoff.get("failure_streak")
+        failure_text = ""
+        if failure_streak:
+            failure_text = f" after {failure_streak} consecutive failures"
+
+        if bool(backoff.get("active", False)) and bool(backoff.get("skipped", False)):
+            if not self.selected_controller_connection_notice:
+                self.selected_controller_connection_notice = (
+                    f"Live polling is not getting through; using the last snapshot{failure_text}."
+                )
+                self.selected_controller_connection_notice_scheme = "amber"
+            self.managed_polling_notice = (
+                f"Live polling is not getting through to {device_id}; "
+                f"using the last snapshot{failure_text}, retrying in {interval_seconds:g}s."
+            )
+        else:
+            if not self.selected_controller_connection_notice:
+                self.selected_controller_connection_notice = (
+                    f"Live polling is not getting through: {status_text}."
+                )
+                self.selected_controller_connection_notice_scheme = "tomato"
+            self.managed_polling_notice = (
+                f"Live polling is not getting through to {device_id}: {status_text}; "
+                f"retrying in {interval_seconds:g}s."
+            )
+
+    @rx.event(background=True)
+    async def selected_controller_live_refresh_loop(self):
+        async with self:
+            if self.selected_controller_live_refresh_running:
+                return
+            self.selected_controller_live_refresh_running = True
+
+        try:
+            while True:
+                async with self:
+                    refresh_enabled = bool(getattr(self, "auto_refresh_enabled", False))
+                    selected_device_id = self.selected_device_id.strip()
+                    monitor_view = self.monitor_view
+                    interval_seconds = self._refresh_interval_seconds()
+                    if not refresh_enabled or not selected_device_id or monitor_view != "intersection":
+                        break
+                    try:
+                        device_type, device_id, config = self._selected_device_target()
+                    except Exception as exc:
+                        self.managed_polling_notice = f"Live refresh paused: {exc}"
+                        self.error = str(exc)
+                        break
+
+                try:
+                    payload, mp_model = await PollingService.collect_snapshot(
+                        device_type,
+                        config,
+                        device_id=device_id,
+                    )
+                except Exception as exc:
+                    result_is_current = False
+                    async with self:
+                        result_is_current = self.selected_device_id.strip() == selected_device_id
+                        if result_is_current:
+                            self.status_text = "Live refresh failed"
+                            self.error = str(exc)
+                            self.selected_controller_connection_notice = f"Live refresh failed: {exc}"
+                            self.selected_controller_connection_notice_scheme = "tomato"
+                            self.managed_polling_notice = (
+                                f"Live polling is not getting through to {selected_device_id}: {exc}; "
+                                f"retrying in {interval_seconds:g}s."
+                            )
+                    if not result_is_current:
+                        continue
+                else:
+                    result_is_current = False
+                    async with self:
+                        result_is_current = self.selected_device_id.strip() == selected_device_id
+                        if result_is_current:
+                            self._apply_selected_status_result(
+                                device_id,
+                                device_type,
+                                payload,
+                                mp_model,
+                            )
+                            self._set_selected_live_refresh_notice(
+                                device_id,
+                                payload,
+                                interval_seconds,
+                            )
+                            refresh_runtime_registry = getattr(self, "refresh_runtime_registry_status", None)
+                            if callable(refresh_runtime_registry):
+                                refresh_runtime_registry()
+                    if not result_is_current:
+                        continue
+
+                await asyncio.sleep(interval_seconds)
+        finally:
+            async with self:
+                self.selected_controller_live_refresh_running = False
 
     async def select_controller_from_row(self, row: str):
         tokenized = row.strip().split()
         if tokenized:
-            await self._select_controller_from_device_id(tokenized[0])
+            return await self._select_controller_from_device_id(tokenized[0])
+        return None
 
     async def select_controller_from_map_points(self, points: list[dict[str, Any]]):
         if not points:
@@ -485,7 +674,7 @@ class MonitorStateMixin(rx.State, mixin=True):
         if not device_id:
             return
 
-        await self._select_controller_from_device_id(device_id)
+        return await self._select_controller_from_device_id(device_id)
 
     async def sync_map_selection_from_storage(
         self,
@@ -503,8 +692,7 @@ class MonitorStateMixin(rx.State, mixin=True):
             if not selected_device_id:
                 return
 
-            await self._select_controller_from_device_id(selected_device_id)
-            return
+            return await self._select_controller_from_device_id(selected_device_id)
 
         if key != FleetService.MAP_CREATE_STORAGE_KEY:
             return
@@ -640,8 +828,69 @@ class MonitorStateMixin(rx.State, mixin=True):
         poll_delta_seconds = self._poll_delta_seconds(previous_updated, self.last_updated)
         self._apply_phase_payload(self.m60_status, poll_delta_seconds)
         self.active_snmp_version = "v2c" if mp_model == 1 else "v1"
-        errors = self.m60_status.get("errors", [])
+        raw_errors = self.m60_status.get("errors", [])
+        errors = raw_errors if isinstance(raw_errors, list) else []
         self.error = "; ".join(errors) if errors else ""
+        lower_status_text = self.status_text.strip().lower()
+        error_blob = self.error.lower()
+        raw_extra = self.m60_status.get("extra", {})
+        extra = raw_extra if isinstance(raw_extra, dict) else {}
+        raw_backoff = extra.get("poll_backoff", {})
+        backoff = raw_backoff if isinstance(raw_backoff, dict) else {}
+        backoff_active = bool(backoff.get("active", False))
+        backoff_skipped = bool(backoff.get("skipped", False))
+        backoff_streak = backoff.get("failure_streak")
+        if not self.is_online or self.error:
+            if backoff_active:
+                if backoff_skipped:
+                    self.selected_controller_connection_notice = (
+                        "Backoff active: using stale snapshot "
+                        f"after {backoff_streak} consecutive failures."
+                    )
+                    self.selected_controller_connection_notice_scheme = "amber"
+                else:
+                    self.selected_controller_connection_notice = (
+                        "Backoff scheduled: "
+                        f"{backoff_streak} consecutive failures detected."
+                    )
+                    self.selected_controller_connection_notice_scheme = "amber"
+            elif lower_status_text.startswith("snmpv1 connection failed"):
+                if "no response from sysdescr/currentpattern" in error_blob:
+                    self.selected_controller_connection_notice = (
+                        "SNMP transport failure: connect probe got no response "
+                        "from sysDescr/currentPattern."
+                    )
+                    self.selected_controller_connection_notice_scheme = "tomato"
+                elif "timeout" in error_blob:
+                    self.selected_controller_connection_notice = "SNMP timeout during connect."
+                    self.selected_controller_connection_notice_scheme = "tomato"
+                else:
+                    self.selected_controller_connection_notice = f"Connection failed: {self.status_text}"
+                    self.selected_controller_connection_notice_scheme = "tomato"
+            elif lower_status_text.startswith("snmp connect exception"):
+                self.selected_controller_connection_notice = "SNMP connect exception: check modem or link stability."
+                self.selected_controller_connection_notice_scheme = "tomato"
+            elif lower_status_text.startswith("snmpv1 poll failed") or lower_status_text.startswith("snmpv1 poll exception"):
+                if "no values returned from known-good oids" in error_blob:
+                    self.selected_controller_connection_notice = (
+                        "SNMP poll failure: no values returned from known-good OIDs."
+                    )
+                    self.selected_controller_connection_notice_scheme = "tomato"
+                elif "timeout" in error_blob:
+                    self.selected_controller_connection_notice = "SNMP timeout during poll."
+                    self.selected_controller_connection_notice_scheme = "tomato"
+                else:
+                    self.selected_controller_connection_notice = f"Poll failed: {self.status_text}"
+                    self.selected_controller_connection_notice_scheme = "tomato"
+            elif self.error:
+                self.selected_controller_connection_notice = f"Device error: {self.error}"
+                self.selected_controller_connection_notice_scheme = "tomato"
+            else:
+                self.selected_controller_connection_notice = f"Connection state: {self.status_text}"
+                self.selected_controller_connection_notice_scheme = "gray"
+        else:
+            self.selected_controller_connection_notice = ""
+            self.selected_controller_connection_notice_scheme = "gray"
         self._safe_log_status_snapshot(status_payload, correlation_id=correlation_id, source=source)
 
     def _safe_log_status_snapshot(
@@ -719,15 +968,15 @@ class MonitorStateMixin(rx.State, mixin=True):
         self.refresh_runtime_health()
         self.refresh_runtime_registry_status()
         self.managed_polling_notice = "Connecting and starting managed polling..."
-        if hasattr(self, "auto_refresh_enabled"):
-            self.auto_refresh_enabled = True
-        if hasattr(self, "auto_reconnect_enabled"):
-            self.auto_reconnect_enabled = True
         await self.connect_m60()
         started = await self.start_selected_managed_polling()
-        auto_refresh_handler = getattr(type(self), "auto_refresh_loop", None)
-        if started and getattr(auto_refresh_handler, "is_background", False):
-            return auto_refresh_handler()
+        if hasattr(self, "auto_refresh_enabled"):
+            self.auto_refresh_enabled = bool(started)
+        if hasattr(self, "auto_reconnect_enabled"):
+            self.auto_reconnect_enabled = bool(started)
+        live_refresh_handler = getattr(type(self), "selected_controller_live_refresh_loop", None)
+        if started and getattr(live_refresh_handler, "is_background", False):
+            return live_refresh_handler()
 
     async def refresh_selected_controller_media_stream_health(self):
         self.selected_controller_media_loading = True

@@ -247,13 +247,13 @@ def _controller_profile_form() -> rx.Component:
                 width="100%",
             ),
             rx.checkbox(
-                "Active polling",
+                "Live updates",
                 checked=TrafficState.controller_profile_form_polling_enabled,
                 on_change=TrafficState.update_controller_profile_form_polling_enabled,
                 size="2",
             ),
             rx.text(
-                "Coordinates are optional for now, but controllers need both latitude and longitude to appear on the map. Uncheck active polling to pause background updates for this controller.",
+                "Coordinates are optional; mapped controllers need both latitude and longitude.",
                 size="1",
                 color="gray",
             ),

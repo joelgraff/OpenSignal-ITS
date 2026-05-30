@@ -11,6 +11,8 @@ Current Phase 5 status: the Skyline DMS post-command verification target, one re
 Post-Phase-5 bounded slice status: the RTSP protocol layer now has deterministic local DESCRIBE-response simulator coverage, including malformed-response and explicit non-2xx response handling, without adding playback, transcoding, or UI work.
 Post-Phase-5 bounded slice follow-up status: `MediaService` now exposes one additive service-level DESCRIBE consumer path with sanitized success and explicit non-2xx outcome metadata while leaving the default reachability path unchanged.
 RTSP current-scope end point: the selected-controller Video Feeds refresh path now consumes the bounded DESCRIBE service seam, so the current RTSP scope ends with one real caller using protocol-level outcomes through the existing monitor surface, without widening the default health path or adding playback work.
+Selected detail live polling feedback status: intersection detail now surfaces selected-controller live polling failures with a prominent banner and a failure-aware Live Phase Diagram empty state, and live-refresh notices now distinguish successful updates from offline, timeout, and backoff snapshots.
+Field SNMP compatibility finding: the current Siemens M60 field reference responds on SNMPv1 only, while the tested M50 target did not answer basic SNMPv1 or SNMPv2c probes, so M50 troubleshooting should precede any device-specific OID work.
 
 ## Current Execution Board
 
@@ -42,7 +44,7 @@ Status markers: `[ ]` not started, `[~]` in progress, `[x]` complete.
 
 ### Next Board Action
 
-- [ ] Reevaluate the overall roadmap before starting another RTSP, DMS, or video-detection slice
+- [ ] Align controller-profile defaults and quick-create guidance with known field SNMP compatibility so Siemens M60 profiles default to SNMPv1 while other device types keep current behavior
 
 ### Validation Track
 
@@ -59,6 +61,12 @@ Status markers: `[ ]` not started, `[~]` in progress, `[x]` complete.
 - Warm end-to-end snapshots currently resolve to 46 OID objects and 6 SNMP round trips through `PollingService.collect_snapshot`.
 - Overlapping same-key snapshot requests are coalesced to one underlying connect/poll cycle.
 - Repeated offline controllers back off and return stale/backoff metadata instead of immediately starting more SNMP work.
+
+### Field SNMP Compatibility Note
+
+- The current Siemens M60 reference controller responds on SNMPv1 only for standard `sysDescr`, M60/SEPAC `currentPattern` and `unitControlStatus`, and representative NTCIP phase-status group objects; SNMPv2c is silent for the same target. Profiles for this surface should use `snmp_version="v1"`.
+- The tested Siemens M50 target did not respond to bounded SNMPv1 or SNMPv2c probes for standard `sysDescr`, M60/SEPAC objects, or representative NTCIP objects. Treat that result as SNMP reachability, controller-agent enablement, community, modem/NAT, firewall, or UDP/161 troubleshooting before building an M50-specific OID profile.
+- After the M50 answers a basic SNMP object, rerun the compatibility probe to determine whether it exposes standard NTCIP 1202 status, a SEPAC-compatible private surface, or a separate M50-specific object map.
 
 ## Steps
 

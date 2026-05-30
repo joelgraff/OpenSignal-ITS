@@ -98,6 +98,7 @@ class PollingStateMixin(rx.State, mixin=True):
 
     def stop_selected_managed_polling(self):
         device_type, device_id, config = self._selected_device_target()
+        had_live_refresh = bool(getattr(self, "auto_refresh_enabled", False))
         ok, message = PollingService.stop_managed_polling(
             device_type=device_type,
             config=config,
@@ -107,8 +108,15 @@ class PollingStateMixin(rx.State, mixin=True):
             self.auto_refresh_enabled = False
         if hasattr(self, "auto_reconnect_enabled"):
             self.auto_reconnect_enabled = False
-        self.managed_polling_notice = message
-        self.error = "" if ok else message
+        if ok:
+            self.managed_polling_notice = message
+            self.error = ""
+        elif had_live_refresh:
+            self.managed_polling_notice = f"Live UI refresh stopped for {device_id}; no managed polling task was running."
+            self.error = ""
+        else:
+            self.managed_polling_notice = message
+            self.error = message
         self.refresh_runtime_registry_status()
 
     def stop_fleet_managed_polling(self):

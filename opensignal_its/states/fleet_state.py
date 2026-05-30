@@ -69,7 +69,7 @@ class FleetStateMixin(rx.State, mixin=True):
     fleet_online_count: int = 0
     fleet_offline_count: int = 0
     fleet_total_count: int = 0
-    auto_refresh_enabled: bool = True
+    auto_refresh_enabled: bool = False
     refresh_interval_text: str = "5"
     auto_reconnect_enabled: bool = True
     reconnect_interval_text: str = "10"
@@ -188,16 +188,41 @@ class FleetStateMixin(rx.State, mixin=True):
                 "Add latitude and longitude in Controllers to place signals on the map."
             )
 
-    def _refresh_fleet_aggregate_fields(self):
-        summary = FleetService.summarize_status_map(self.fleet_status_by_id)
-        self.fleet_total_count = int(summary["total"])
-        self.fleet_online_count = int(summary["online"])
-        self.fleet_offline_count = int(summary["offline"])
-        if self.fleet_total_count > 0:
-            self.fleet_status_summary = (
-                f"Controllers: {self.fleet_total_count} total, "
-                f"{self.fleet_online_count} online, {self.fleet_offline_count} offline."
-            )
+    def _refresh_fleet_aggregate_fields(self, profiles: list[dict[str, Any]] | None = None):
+        if profiles is None:
+            try:
+                profiles = self._fleet_profiles()
+            except Exception:
+                profiles = []
+
+        profile_ids = {
+            str(profile.get("device_id", "")).strip()
+            for profile in profiles
+            if str(profile.get("device_id", "")).strip()
+        }
+        status_by_id = dict(self.fleet_status_by_id)
+        total = len(profile_ids) if profile_ids else len(status_by_id)
+        known_statuses = [
+            payload
+            for device_id, payload in status_by_id.items()
+            if not profile_ids or device_id in profile_ids
+        ]
+        online = sum(1 for payload in known_statuses if bool(payload.get("is_online", False)))
+        offline = sum(
+            1
+            for payload in known_statuses
+            if "is_online" in payload and not bool(payload.get("is_online", False))
+        )
+        awaiting_refresh = max(0, total - len(known_statuses))
+
+        self.fleet_total_count = total
+        self.fleet_online_count = online
+        self.fleet_offline_count = offline
+        if total > 0:
+            summary = f"Controllers: {total} configured, {online} online, {offline} offline"
+            if awaiting_refresh:
+                summary = f"{summary}, {awaiting_refresh} awaiting refresh"
+            self.fleet_status_summary = f"{summary}."
 
     def _cache_device_status(self, device_id: str, device_type: str, payload: dict[str, Any]):
         cache = dict(self.fleet_status_by_id)
@@ -346,7 +371,7 @@ class FleetStateMixin(rx.State, mixin=True):
                 self.fleet_device_rows = list(adapted["fleet_device_rows"])
                 self._refresh_fleet_map_fields(profiles)
                 self._sync_controller_profile_rows()
-                self._refresh_fleet_aggregate_fields()
+                self._refresh_fleet_aggregate_fields(profiles)
                 self.refresh_runtime_registry_status()
 
                 selected_payload = adapted["selected_payload"]
@@ -366,7 +391,7 @@ class FleetStateMixin(rx.State, mixin=True):
 
     @rx.event(background=True)
     async def auto_refresh_loop(self):
-        """Continuously poll the fleet while active polling is enabled."""
+        """Continuously poll the fleet while live updates are enabled."""
         async with self:
             if self.auto_refresh_running:
                 return

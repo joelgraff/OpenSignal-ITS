@@ -13,6 +13,7 @@ from opensignal_its.db.audit_store import AuditStore
 from opensignal_its.services.command_service import CommandService
 from opensignal_its.services.device_runtime_service import DeviceRuntimeService, _RuntimeEntry
 from opensignal_its.services.polling_service import PollingService
+from opensignal_its.services.device_runtime_service import RUNTIME
 
 
 class _FakeRegistryDevice(Device):
@@ -488,6 +489,26 @@ class RegistryServicesTests(unittest.TestCase):
         first_id = first_payload.get("raw_data", {}).get("instance_id")
         second_id = second_payload.get("raw_data", {}).get("instance_id")
         self.assertEqual(first_id, second_id)
+
+    def test_runtime_recreates_device_when_config_changes(self):
+        first_config = DeviceConfig(ip_address="10.0.0.1", name="Fake")
+        second_config = DeviceConfig(ip_address="10.0.0.2", name="Fake")
+
+        runtime_key, first_device = RUNTIME.get_or_create(
+            "fake_registry",
+            first_config,
+            device_id="dev-1",
+        )
+        runtime_key_again, second_device = RUNTIME.get_or_create(
+            "fake_registry",
+            second_config,
+            device_id="dev-1",
+        )
+
+        self.assertEqual(runtime_key, runtime_key_again)
+        self.assertIsNot(first_device, second_device)
+        self.assertEqual("10.0.0.2", second_device.config.ip_address)
+        self.assertEqual("10.0.0.2", RUNTIME.get(runtime_key).config.ip_address)
 
     def test_runtime_registry_prunes_stale_entries(self):
         registry = DeviceRuntimeService()

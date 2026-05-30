@@ -13,6 +13,7 @@ from .preflight_service import bootstrap_runtime_safety, validate_runtime_config
 from .ops_api_service import OpsApiService
 from .polling_service import PollingService
 from .safety_service import CommandSafetyService, SafetyDecision
+from .snmp_compatibility_service import SnmpCompatibilityService
 
 __all__ = [
 	"OperatorAuthService",
@@ -33,4 +34,5 @@ __all__ = [
 	"PollingService",
 	"CommandSafetyService",
 	"SafetyDecision",
+	"SnmpCompatibilityService",
 ]

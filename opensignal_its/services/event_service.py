@@ -3,12 +3,27 @@
 from __future__ import annotations
 
 import os
+import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..db import STORE
 from ..models.event import AlarmDisplayRow, AlarmHistoryDisplayRow, EventDisplayView, TimelineDisplayRow
+
+
+logger = logging.getLogger(__name__)
+
+
+STORAGE_COUNT_TABLES: tuple[str, ...] = (
+    "command_audit",
+    "status_snapshots",
+    "alarm_acknowledgements",
+    "alarm_silences",
+    "alarm_events",
+    "alert_webhook_queue",
+    "alert_webhook_deadletter",
+)
 
 
 def _parse_iso(ts: str) -> datetime:
@@ -110,7 +125,11 @@ def _extract_between(text: str, start_token: str, end_token: str = "") -> str:
 class EventService:
     @staticmethod
     def storage_table_counts() -> dict[str, int]:
-        return STORE.table_row_counts()
+        try:
+            return STORE.table_row_counts()
+        except Exception as exc:
+            logger.warning("Storage table count unavailable: %s", exc)
+            return {table: 0 for table in STORAGE_COUNT_TABLES}
 
     @staticmethod
     def recommended_silence_minutes(alarm_key: str) -> int:

@@ -72,6 +72,9 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):
             refresh_map(profiles)
+        refresh_aggregates = getattr(self, "_refresh_fleet_aggregate_fields", None)
+        if callable(refresh_aggregates):
+            refresh_aggregates(profiles)
 
         if not self.controller_profile_notice.startswith("Profile JSON error:"):
             PollingService.sync_runtime_registry(profiles)
@@ -94,7 +97,11 @@ class ConfigurationStateMixin(rx.State, mixin=True):
             self.auto_refresh_running = False
 
         auto_refresh_handler = getattr(type(self), "auto_refresh_loop", None)
-        if callable(auto_refresh_handler) and getattr(auto_refresh_handler, "is_background", False):
+        if (
+            bool(getattr(self, "auto_refresh_enabled", False))
+            and callable(auto_refresh_handler)
+            and getattr(auto_refresh_handler, "is_background", False)
+        ):
             return auto_refresh_handler()
 
     def update_controller_profile_filter_text(self, value: str):
@@ -298,7 +305,7 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         self.controller_profile_form_polling_enabled = bool(selected.get("polling_enabled", True))
         if hasattr(self, "managed_polling_notice"):
             self.managed_polling_notice = (
-                f"Active polling is {'enabled' if self.controller_profile_form_polling_enabled else 'paused'} for {target}."
+                f"Live updates are {'enabled' if self.controller_profile_form_polling_enabled else 'paused'} for {target}."
             )
         self.selected_device_id = self.controller_profile_form_device_id
         self.controller_profile_notice = f"Loaded controller profile {target}."
@@ -462,7 +469,7 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         self.controller_profile_form_polling_enabled = polling_enabled
         if hasattr(self, "managed_polling_notice"):
             self.managed_polling_notice = (
-                f"Active polling is {'enabled' if polling_enabled else 'paused'} for {target}."
+                f"Live updates are {'enabled' if polling_enabled else 'paused'} for {target}."
             )
         self.device_profiles_json = FleetService.dump_profiles_json(updated_profiles)
         self._persist_controller_profiles_json()
@@ -480,15 +487,36 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         if callable(refresh_runtime_registry):
             refresh_runtime_registry()
 
+        if hasattr(self, "auto_refresh_enabled"):
+            self.auto_refresh_enabled = polling_enabled
+        if hasattr(self, "auto_reconnect_enabled"):
+            self.auto_reconnect_enabled = polling_enabled
+        if not polling_enabled:
+            clear_connection_notice = getattr(self, "_clear_selected_controller_connection_notice", None)
+            if callable(clear_connection_notice):
+                clear_connection_notice()
+        if polling_enabled:
+            start_live_refresh = getattr(self, "_selected_controller_live_refresh_event", None)
+            if callable(start_live_refresh):
+                live_refresh_event = start_live_refresh()
+                if live_refresh_event is not None:
+                    return live_refresh_event
+
         refresh_fleet_status = getattr(type(self), "refresh_fleet_status", None)
         if callable(refresh_fleet_status):
             return refresh_fleet_status()
+
+        return None
+
     def open_selected_controller_status(self):
         target = self.controller_profile_form_device_id.strip() or self.controller_profile_original_device_id.strip()
         if not target:
             self.controller_profile_notice = "Save or load a controller profile before opening Overview."
             return
 
+        reset_live_detail = getattr(self, "_reset_selected_controller_live_detail_state", None)
+        if callable(reset_live_detail) and target != self.selected_device_id.strip():
+            reset_live_detail()
         self.selected_device_id = target
         self.ui_workspace_mode = "monitor"
         self.monitor_view = "intersection"
@@ -497,3 +525,7 @@ class ConfigurationStateMixin(rx.State, mixin=True):
         refresh_map = getattr(self, "_refresh_fleet_map_fields", None)
         if callable(refresh_map):
             refresh_map()
+        start_live_refresh = getattr(self, "_selected_controller_live_refresh_event", None)
+        if callable(start_live_refresh):
+            return start_live_refresh()
+        return None

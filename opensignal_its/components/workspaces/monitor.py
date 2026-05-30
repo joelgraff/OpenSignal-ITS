@@ -486,10 +486,16 @@ def _intersection_breadcrumb() -> rx.Component:
                 max_width="10em",
             ),
             rx.checkbox(
-                "Active polling",
+                "Live updates",
                 checked=TrafficState.controller_profile_form_polling_enabled,
                 on_change=TrafficState.update_controller_profile_polling_enabled,
                 size="2",
+            ),
+            rx.button(
+                "Refresh once",
+                on_click=TrafficState.refresh_status,
+                size="1",
+                variant="outline",
             ),
             spacing="2",
             align="center",
@@ -497,11 +503,6 @@ def _intersection_breadcrumb() -> rx.Component:
             wrap="wrap",
         ),
         rx.text(TrafficState.managed_polling_notice, size="1", color="gray"),
-        rx.text(
-            "Active polling updates the selected controller automatically; uncheck the box to pause its live updates.",
-            size="1",
-            color="gray",
-        ),
         spacing="1",
         align="start",
         width="100%",
@@ -565,6 +566,69 @@ def _intersection_header_card() -> rx.Component:
     )
 
 
+def _intersection_connection_notice() -> rx.Component:
+    return rx.cond(
+        TrafficState.selected_controller_connection_notice != "",
+        rx.box(
+            rx.hstack(
+                rx.badge(
+                    "Live polling issue",
+                    color_scheme=TrafficState.selected_controller_connection_notice_scheme,
+                    size="1",
+                    variant="soft",
+                ),
+                rx.text(
+                    TrafficState.selected_controller_connection_notice,
+                    size="1",
+                    color=TrafficState.selected_controller_connection_notice_scheme,
+                ),
+                spacing="2",
+                align="center",
+                wrap="wrap",
+                width="100%",
+            ),
+            width="100%",
+            padding="2",
+            border="1px solid #fed7aa",
+            border_left="4px solid #f97316",
+            border_radius="6px",
+            background="#fff7ed",
+        ),
+        rx.fragment(),
+    )
+
+
+def _phase_diagram_empty_state() -> rx.Component:
+    return rx.cond(
+        TrafficState.selected_controller_connection_notice != "",
+        rx.vstack(
+            rx.text(
+                "Live polling is not getting through.",
+                size="2",
+                font_weight="600",
+                color=TrafficState.selected_controller_connection_notice_scheme,
+            ),
+            rx.text(
+                TrafficState.selected_controller_connection_notice,
+                size="1",
+                color="gray",
+            ),
+            spacing="1",
+            align="start",
+            width="100%",
+        ),
+        rx.text(
+            rx.cond(
+                TrafficState.controller_profile_form_polling_enabled,
+                "Waiting for live phase data.",
+                "Live updates are paused.",
+            ),
+            size="1",
+            color="gray",
+        ),
+    )
+
+
 def _intersection_control_panel() -> rx.Component:
     return rx.vstack(
         rx.text("Pattern / Mode", size="1", color="gray"),
@@ -614,6 +678,15 @@ def _intersection_control_panel() -> rx.Component:
             width="100%",
         ),
         rx.text(TrafficState.selected_controller_command_notice, size="1", color="gray"),
+        rx.cond(
+            TrafficState.selected_controller_connection_notice != "",
+            rx.text(
+                TrafficState.selected_controller_connection_notice,
+                size="1",
+                color=TrafficState.selected_controller_connection_notice_scheme,
+            ),
+            rx.fragment(),
+        ),
         rx.cond(
             TrafficState.selected_controller_command_lifecycle_notice != "",
             rx.text(TrafficState.selected_controller_command_lifecycle_notice, size="1", color="gray"),
@@ -908,6 +981,7 @@ def _intersection_view() -> rx.Component:
     return rx.vstack(
         _intersection_breadcrumb(),
         _intersection_header_card(),
+        _intersection_connection_notice(),
         rx.grid(
             workspace_section_card(
                 title="Live Phase Diagram",
@@ -921,11 +995,7 @@ def _intersection_view() -> rx.Component:
                         ring_status_lines=TrafficState.ring_status_lines,
                         ring_status_console_text=TrafficState.ring_status_console_text,
                     ),
-                    rx.text(
-                        "The live phase diagram updates automatically while active polling is enabled.",
-                        size="1",
-                        color="gray",
-                    ),
+                    _phase_diagram_empty_state(),
                 ),
             ),
             workspace_section_card(

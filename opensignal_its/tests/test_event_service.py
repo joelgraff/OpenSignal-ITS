@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,32 @@ class EventServiceTests(unittest.TestCase):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+    def test_storage_table_counts_returns_zero_counts_when_store_unavailable(self):
+        class _BrokenStore:
+            def table_row_counts(self):
+                raise sqlite3.DatabaseError("database disk image is malformed")
+
+        original_store = event_service.STORE
+        event_service.STORE = _BrokenStore()
+        try:
+            with self.assertLogs("opensignal_its.services.event_service", level="WARNING"):
+                counts = event_service.EventService.storage_table_counts()
+        finally:
+            event_service.STORE = original_store
+
+        self.assertEqual(
+            {
+                "command_audit": 0,
+                "status_snapshots": 0,
+                "alarm_acknowledgements": 0,
+                "alarm_silences": 0,
+                "alarm_events": 0,
+                "alert_webhook_queue": 0,
+                "alert_webhook_deadletter": 0,
+            },
+            counts,
+        )
 
     def test_build_timeline_and_alarms_detects_offline_and_fail_streaks(self):
         os.environ["OPENSIGNAL_ALARM_OFFLINE_SNAPSHOT_STREAK"] = "2"

@@ -40,8 +40,14 @@ class DeviceRuntimeService:
         runtime_key = self._runtime_key(device_type, device_id, config)
         existing = self._entries.get(runtime_key)
         if existing is not None:
-            setattr(existing.device, "_runtime_key", runtime_key)
-            return runtime_key, existing.device
+            if existing.config == config:
+                setattr(existing.device, "_runtime_key", runtime_key)
+                return runtime_key, existing.device
+
+            try:
+                existing.device.stop_polling()
+            except Exception:
+                pass
 
         device = Device.create(device_type, config)
         setattr(device, "_runtime_key", runtime_key)
